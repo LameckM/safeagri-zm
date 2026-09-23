@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 
 from .db import get_conn, init_db
+from .scheduler import run_schedule
 from .schemas import ReadingIn, ReadingOut
 from .validation import check_reading
 
@@ -123,5 +124,25 @@ def list_alerts(resolved: bool = False):
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM alerts WHERE resolved = ? ORDER BY id DESC", (int(resolved),)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/schedule/run")
+def schedule_run():
+    """Evaluate all fields against the rule-based thresholds and act on it:
+    logs an irrigation_event for any field that needs water, raises a
+    node_offline alert where relevant, and returns every field's decision."""
+    return run_schedule()
+
+
+@app.get("/schedule/events")
+def schedule_events(limit: int = Query(50, ge=1, le=500)):
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT e.*, f.name AS field_name FROM irrigation_events e
+               JOIN fields f ON f.id = e.field_id
+               ORDER BY e.id DESC LIMIT ?""",
+            (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
