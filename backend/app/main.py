@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from .db import get_conn, init_db
 from .scheduler import run_schedule
@@ -16,6 +17,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Smart Irrigation API", lifespan=lifespan)
+
+# The dashboard (Vite, localhost:5173) runs on a different port, so the
+# browser treats it as a different origin and blocks the request unless
+# we explicitly allow it here. Tighten this to the real dashboard URL
+# before this ever goes further than local development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def utc_iso(dt: datetime | None = None) -> str:
