@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "SafeAgri ZM",
+    "slug": "safeagri-zm",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "safeagri",
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "backgroundColor": "#EFEAD9",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "zm.safeagri.app",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "android": {
+      "package": "zm.safeagri.app",
+      "backgroundColor": "#EFEAD9",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      "expo-background-fetch",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "07e83570-5095-447e-9e5f-1de0fad6ed39"
+      }
+    }
+  }
+}
