@@ -40,6 +40,9 @@ log = logging.getLogger("simulator")
 API_URL = "http://localhost:8000/readings"
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
 READING_INTERVAL_MIN = 5  # matches the proposal's 5-minute target
+IRRIGATE_BELOW = 20.0     # environmental/ farmer watering baseline, matching ml/make_dataset.py
+IRRIGATE_GAIN = 25.0      # moisture percentage points added by that baseline
+SENSOR_NOISE = 0.15       # small sensor variation, matching ml/make_dataset.py
 
 
 @dataclass
@@ -91,6 +94,12 @@ def step_moisture(f: FieldState, minutes: int) -> float:
         new_moisture += rain_gain
         log.info(f"RAIN on {f.node_id}: +{rain_gain:.1f}% moisture")
 
+    # Match the ML dataset's normal farming baseline. This represents
+    # background/farmer watering, not an automated pump command.
+    if new_moisture <= IRRIGATE_BELOW:
+        new_moisture += IRRIGATE_GAIN
+        log.info(f"BACKGROUND WATERING on {f.node_id}: +{IRRIGATE_GAIN:.1f}% moisture")
+
     f.moisture = max(2.0, min(100.0, new_moisture))
     return f.moisture
 
@@ -139,21 +148,24 @@ def maybe_inject_fault(f: FieldState, sim_time: datetime) -> str | None:
 def build_reading(f: FieldState, sim_time: datetime, minutes_elapsed: int) -> dict | None:
     fault = maybe_inject_fault(f, sim_time)
     moisture = step_moisture(f, minutes_elapsed)
+    # The sensor reports a slightly noisy, firmware-clamped measurement;
+    # the underlying soil state remains unchanged by measurement noise.
+    reported_moisture = max(0.0, min(100.0, moisture + random.gauss(0, SENSOR_NOISE)))
     temperature = diurnal_temp(f.temp_base, sim_time)
     humidity = diurnal_humidity(f.humidity_base, sim_time)
 
     if fault == "offline":
         return None  # node sends nothing at all
     if fault == "spike":
-        moisture = random.choice([999, -50, 250])
+        reported_moisture = random.choice([999, -50, 250])
     elif fault == "flatline":
         if f.flatline_value is None:
-            f.flatline_value = moisture
-        moisture = f.flatline_value
+            f.flatline_value = reported_moisture
+        reported_moisture = f.flatline_value
 
     return {
         "node_id": f.node_id,
-        "soil_moisture": round(moisture, 1),
+        "soil_moisture": round(reported_moisture, 1),
         "temperature": temperature,
         "humidity": humidity,
         "timestamp": sim_time.isoformat(),
