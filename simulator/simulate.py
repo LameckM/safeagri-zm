@@ -17,7 +17,6 @@ Usage:
     python simulate.py --hours 48      # run for 48 simulated hours then stop
 """
 import argparse
-import json
 import logging
 import math
 import random
@@ -53,6 +52,8 @@ class FieldState:
     rain_chance_per_hour: float = 0.03
     offline: bool = False
     offline_until: datetime | None = None
+    flatline_until: datetime | None = None
+    flatline_value: float | None = None
     fault_log: list = dc_field(default_factory=list)
 
 
@@ -95,13 +96,23 @@ def step_moisture(f: FieldState, minutes: int) -> float:
 
 
 def maybe_inject_fault(f: FieldState, sim_time: datetime) -> str | None:
-    """Small per-step chance of each fault type. Logged so it can be used
-    as ground truth when testing the anomaly detector."""
+    """Start, continue, and end faults; log transitions for labeled testing."""
     if f.offline:
-        if sim_time >= f.offline_until:
-            f.offline = False
-            log.info(f"FAULT END offline on {f.node_id}")
-        return "offline"
+        if f.offline_until is not None and sim_time < f.offline_until:
+            return "offline"
+
+        # The outage has ended. Resume normal processing on this same step.
+        f.offline = False
+        f.offline_until = None
+        log.info(f"FAULT END offline on {f.node_id}")
+
+    if f.flatline_until is not None:
+        if sim_time < f.flatline_until:
+            return "flatline"
+
+        f.flatline_until = None
+        f.flatline_value = None
+        log.info(f"FAULT END flatline on {f.node_id}")
 
     roll = random.random()
     if roll < 0.0006:
@@ -113,7 +124,14 @@ def maybe_inject_fault(f: FieldState, sim_time: datetime) -> str | None:
         log.info(f"FAULT spike on {f.node_id}")
         return "spike"
     if roll < 0.0014:
-        log.info(f"FAULT flatline on {f.node_id}")
+        duration = random.choice([30, 60, 120])
+        f.flatline_until = sim_time + timedelta(minutes=duration)
+        # The reported value is captured after the underlying sensor state
+        # advances for this reading, then held constant for the fault period.
+        log.info(
+            f"FAULT START flatline on {f.node_id} "
+            f"until {f.flatline_until.isoformat()} ({duration} simulated minutes)"
+        )
         return "flatline"
     return None
 
@@ -129,8 +147,9 @@ def build_reading(f: FieldState, sim_time: datetime, minutes_elapsed: int) -> di
     if fault == "spike":
         moisture = random.choice([999, -50, 250])
     elif fault == "flatline":
-        moisture = f.moisture  # looks normal but repeats exactly next step too
-        f._flatlined_at = moisture  # noqa: SLF001 (simple sim state, fine here)
+        if f.flatline_value is None:
+            f.flatline_value = moisture
+        moisture = f.flatline_value
 
     return {
         "node_id": f.node_id,
