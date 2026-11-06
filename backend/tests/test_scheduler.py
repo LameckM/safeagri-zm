@@ -98,6 +98,28 @@ def test_dry_field_with_invalid_latest_reading_is_not_irrigated(client):
 
     decisions = client.post("/schedule/run").json()
     d1 = next(d for d in decisions if d["field_id"] == 1)
-    # Falls back to the last valid reading, still irrigates on that
-    assert d1["action"] == "irrigate"
-    assert d1["moisture"] == 15
+    # A recent invalid packet means the sensor is faulty. Do not make
+    # an irrigation decision from an older valid value.
+    assert d1["action"] == "skip"
+    assert d1["reason"] == "sensor_fault"
+
+
+
+def test_offline_alert_resolves_when_sensor_packet_returns(client):
+    post_reading(client, "node-04", moisture=40, minutes_ago=30)
+    client.post("/alerts/sync")
+    assert any(a["kind"] == "node_offline" for a in client.get("/alerts").json())
+
+    post_reading(client, "node-04", moisture=40)
+    client.post("/alerts/sync")
+    assert not any(a["kind"] == "node_offline" for a in client.get("/alerts").json())
+    assert any(a["kind"] == "node_offline" for a in client.get("/alerts", params={"resolved": True}).json())
+
+
+def test_invalid_recent_packet_prevents_irrigation_from_stale_good_reading(client):
+    post_reading(client, "node-01", moisture=10, minutes_ago=30)
+    post_reading(client, "node-01", moisture=999, minutes_ago=0)
+    decisions = client.post("/schedule/run").json()
+    d1 = next(d for d in decisions if d["field_id"] == 1)
+    assert d1["action"] == "skip"
+    assert d1["reason"] == "sensor_fault"
