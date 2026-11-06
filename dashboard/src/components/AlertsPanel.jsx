@@ -7,6 +7,7 @@ function timeLabel(isoString) {
 const KIND_LABEL = {
   sensor_fault: "Sensor fault",
   node_offline: "Node offline",
+  dry_soil: "Dry soil",
 };
 
 export default function AlertsPanel({ alerts }) {
@@ -22,7 +23,7 @@ export default function AlertsPanel({ alerts }) {
               <span className={`alert-row__kind alert-row__kind--${alert.kind}`}>
                 {KIND_LABEL[alert.kind] || alert.kind}
               </span>
-              <span className="alert-row__message">{alert.field_name}: {alert.message}</span>
+              <span className="alert-row__message">{alert.message}</span>
               <span className="alert-row__time">{timeLabel(alert.created_at)}</span>
             </li>
           ))}
