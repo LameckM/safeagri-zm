@@ -18,13 +18,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Smart Irrigation API", lifespan=lifespan)
 
-# The dashboard (Vite, localhost:5173) runs on a different port, so the
-# browser treats it as a different origin and blocks the request unless
-# we explicitly allow it here. Tighten this to the real dashboard URL
-# before this ever goes further than local development.
+# Permit local development and private-network dashboard origins.
+# CORS is not authentication; do not expose this development API publicly.
+LOCAL_DASHBOARD_ORIGIN = (
+    r"^https?://(localhost|127\.0\.0\.1|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})"
+    r"(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=LOCAL_DASHBOARD_ORIGIN,
     allow_methods=["*"],
     allow_headers=["*"],
 )

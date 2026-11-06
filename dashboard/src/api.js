@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Use the hostname that served the dashboard, with the API on port 8000.
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  `${window.location.protocol}//${window.location.hostname}:8000`;
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_URL}${path}`, {

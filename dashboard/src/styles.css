@@ -275,3 +275,26 @@ body {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+
+/* Keep the dashboard comfortable on narrow phone screens. */
+html { min-width: 320px; -webkit-text-size-adjust: 100%; }
+button { min-height: 44px; touch-action: manipulation; }
+@media (max-width: 640px) {
+  .page { padding: 22px 14px 40px; }
+  .page__header { align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; }
+  .page__header h1 { font-size: 28px; }
+  .status-pill { font-size: 12px; padding: 7px 10px; }
+  .field-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; }
+  .field-card { padding: 14px; }
+  .field-card__moisture-value { font-size: 34px; }
+  .field-card__meta { flex-wrap: wrap; gap: 10px 18px; }
+  .actions { align-items: stretch; flex-direction: column; gap: 8px; }
+  .check-button { width: 100%; min-height: 48px; }
+  .actions__note { line-height: 1.4; }
+  .panel-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .panel { min-width: 0; padding: 16px 14px; }
+  .alert-row, .log-row { grid-template-columns: minmax(0, 1fr); gap: 4px; align-items: start; }
+  .alert-row__kind { justify-self: start; }
+  .alert-row__time, .log-row__time { white-space: normal; }
+}

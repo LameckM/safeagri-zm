@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import random
 import time
 from dataclasses import dataclass, field as dc_field
@@ -38,7 +39,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("simulator")
 
-API_URL = "http://localhost:8000/readings"
+API_URL = f"{os.getenv('SAFEAGRI_API_URL', 'http://localhost:8000').rstrip('/')}/readings"
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
 READING_INTERVAL_MIN = 5  # matches the proposal's 5-minute target
 
