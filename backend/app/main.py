@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import get_conn, init_db
-from .scheduler import run_schedule
+from .scheduler import run_schedule, sync_node_alerts
 from .schemas import ReadingIn, ReadingOut
 from .validation import check_reading_flags
 
@@ -143,6 +143,13 @@ def latest_per_field():
                ORDER BY r.field_id"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.post("/alerts/sync")
+def synchronize_alerts():
+    """Refresh stale-node alerts without triggering irrigation actions."""
+    sync_node_alerts()
+    return {"status": "synced"}
 
 
 @app.get("/alerts")
