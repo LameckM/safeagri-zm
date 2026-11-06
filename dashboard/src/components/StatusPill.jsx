@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function StatusPill({ offlineCount, alertCount }) {
+export default function StatusPill({ offlineCount, alertCount, awaitingCount }) {
   if (offlineCount > 0) {
     return (
       <span className="status-pill status-pill--critical">
@@ -14,6 +14,9 @@ export default function StatusPill({ offlineCount, alertCount }) {
         {alertCount} active {alertCount === 1 ? "alert" : "alerts"}
       </span>
     );
+  }
+  if (awaitingCount > 0) {
+    return <span className="status-pill status-pill--warning">Awaiting first readings</span>;
   }
   return <span className="status-pill status-pill--good">All nodes reporting</span>;
 }
