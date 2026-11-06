@@ -69,8 +69,19 @@ def test_field_with_no_readings_is_skipped_not_irrigated(client):
     assert d1["reason"] == "no_readings_yet"
 
 
+def age_received_packet(node_id, minutes):
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE readings SET received_at = ?
+               WHERE field_id = (SELECT id FROM fields WHERE node_id = ?)""",
+            (old_time.isoformat(), node_id),
+        )
+
+
 def test_stale_reading_raises_offline_alert_not_irrigation(client):
-    post_reading(client, "node-04", moisture=10, minutes_ago=30)
+    post_reading(client, "node-04", moisture=10)
+    age_received_packet("node-04", 30)
     decisions = client.post("/schedule/run").json()
 
     d4 = next(d for d in decisions if d["field_id"] == 4)
@@ -106,7 +117,8 @@ def test_dry_field_with_invalid_latest_reading_is_not_irrigated(client):
 
 
 def test_offline_alert_resolves_when_sensor_packet_returns(client):
-    post_reading(client, "node-04", moisture=40, minutes_ago=30)
+    post_reading(client, "node-04", moisture=40)
+    age_received_packet("node-04", 30)
     client.post("/alerts/sync")
     assert any(a["kind"] == "node_offline" for a in client.get("/alerts").json())
 
