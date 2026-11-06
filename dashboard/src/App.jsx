@@ -18,6 +18,7 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
+      await api.syncAlerts();
       const [fieldList, latest, alertList, eventList] = await Promise.all([
         api.fields(),
         api.latest(),
@@ -55,11 +56,11 @@ export default function App() {
     }
   }
 
+  const awaitingCount = fields.filter((f) => !readingsByField[f.id]?.last_seen_at).length;
   const offlineCount = fields.filter((f) => {
     const r = readingsByField[f.id];
-    if (!r) return true;
-    const mins = (Date.now() - new Date(r.recorded_at).getTime()) / 60000;
-    return mins > 15;
+    if (!r?.last_seen_at) return false;
+    return (Date.now() - new Date(r.last_seen_at).getTime()) / 60000 > 15;
   }).length;
 
   return (
@@ -69,7 +70,7 @@ export default function App() {
           <h1>SafeAgri ZM</h1>
           <p className="page__subtitle">Kafubu Block, Luanshya</p>
         </div>
-        <StatusPill offlineCount={offlineCount} alertCount={alerts.length} />
+        <StatusPill offlineCount={offlineCount} alertCount={alerts.length} awaitingCount={awaitingCount} />
       </header>
 
       {connectionError && (
