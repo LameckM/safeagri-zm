@@ -138,7 +138,8 @@ def latest_per_field():
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT r.*, f.name AS field_name,
-                      (SELECT MAX(all_r.received_at) FROM readings all_r WHERE all_r.field_id = r.field_id) AS last_seen_at
+                      (SELECT MAX(all_r.received_at) FROM readings all_r WHERE all_r.field_id = r.field_id) AS last_seen_at,
+                      (SELECT last_r.valid FROM readings last_r WHERE last_r.field_id = r.field_id ORDER BY last_r.received_at DESC, last_r.id DESC LIMIT 1) AS last_packet_valid
                FROM readings r JOIN fields f ON f.id = r.field_id
                WHERE r.id IN (SELECT MAX(id) FROM readings WHERE valid = 1 GROUP BY field_id)
                ORDER BY r.field_id"""
