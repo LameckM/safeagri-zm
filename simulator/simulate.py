@@ -177,7 +177,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fast", action="store_true", help="advance simulated time quickly")
     parser.add_argument("--hours", type=float, default=None, help="stop after N simulated hours")
-    parser.add_argument("--sensor", choices=["humidity", "temperature", "soil_moisture"],
+    parser.add_argument("--sensor", choices=["humidity", "temperature", "soil_moisture", "water"],
                         help="test one sensor independently; omit for normal farm simulation")
     parser.add_argument("--scenario", choices=["normal", "low", "high", "spike", "flatline", "offline"],
                         default="normal", help="target sensor behaviour")
@@ -187,4 +187,5 @@ if __name__ == "__main__":
         parser.error("--sensor is required when using a non-normal --scenario")
     if args.scenario == "offline" and not args.sensor:
         parser.error("--sensor is required for an offline test")
-    run(args.fast, args.hours, args.sensor, args.scenario, args.node)
+    selected_sensor = "soil_moisture" if args.sensor == "water" else args.sensor
+    run(args.fast, args.hours, selected_sensor, args.scenario, args.node)
