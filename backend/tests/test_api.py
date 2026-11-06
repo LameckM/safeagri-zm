@@ -64,3 +64,37 @@ def test_client_timestamp_is_kept(client):
     client.post("/readings", json={**GOOD, "timestamp": "2026-09-19T14:05:00Z"})
     row = client.get("/readings").json()[0]
     assert row["recorded_at"].startswith("2026-09-19T14:05:00")
+
+
+def test_multiple_sensor_faults_are_reported_together(client):
+    bad = {**GOOD, "temperature": 75, "humidity": 110}
+    response = client.post("/readings", json=bad)
+    assert response.status_code == 201
+    assert response.json()["valid"] is False
+    assert response.json()["flag"] == "temperature_out_of_range,humidity_out_of_range"
+
+    alerts = client.get("/alerts").json()
+    assert len(alerts) == 1
+    assert "temperature" in alerts[0]["message"]
+    assert "humidity" in alerts[0]["message"]
+
+
+def test_repeated_sensor_faults_update_one_active_alert(client):
+    bad = {**GOOD, "humidity": 110}
+    client.post("/readings", json=bad)
+    client.post("/readings", json={**bad, "humidity": 120})
+
+    alerts = client.get("/alerts").json()
+    assert len(alerts) == 1
+    assert "120" in alerts[0]["message"]
+
+
+def test_valid_reading_resolves_sensor_fault_alert(client):
+    client.post("/readings", json={**GOOD, "humidity": 110})
+    assert len(client.get("/alerts").json()) == 1
+
+    client.post("/readings", json=GOOD)
+    assert client.get("/alerts").json() == []
+    resolved = client.get("/alerts", params={"resolved": True}).json()
+    assert len(resolved) == 1
+    assert resolved[0]["kind"] == "sensor_fault"
