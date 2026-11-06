@@ -1,27 +1,24 @@
 """
-Simulated farm for SafeAgri ZM.
+SafeAgri simulated farm.
 
-Posts readings to the backend for all 4 fields, on a loop, so the API,
-scheduler, dashboard and ML pipeline all have data to work against before
-the ESP32 hardware exists.
+Normal mode posts all four fields every five simulated minutes.
+Targeted mode changes only one selected sensor on one node while the other
+two measurements continue to report normal simulated values.
 
-Each field dries down over the day, jumps back up on a simulated rain
-event, and drifts a little differently per field so the 4 aren't
-identical. Faults (flatline, spike, node offline) are injected on a
-schedule and logged to faults.log, because the anomaly detector will
-need labeled ground truth to be tested against honestly.
-
-Usage:
-    python simulate.py                 # real-time, one post every 5 min
-    python simulate.py --fast          # 1 simulated reading per second
-    python simulate.py --hours 48      # run for 48 simulated hours then stop
+Examples:
+    python simulate.py --fast
+    python simulate.py --sensor humidity --scenario high --node node-01 --fast
+    python simulate.py --sensor temperature --scenario spike --node node-02 --fast
+    python simulate.py --sensor soil_moisture --scenario low --node node-03 --hours 1
+    python simulate.py --sensor humidity --scenario flatline --node node-01
+    python simulate.py --sensor temperature --scenario offline --node node-01
 """
 import argparse
 import logging
 import math
 import random
 import time
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,161 +36,137 @@ log = logging.getLogger("simulator")
 
 API_URL = "http://localhost:8000/readings"
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
-READING_INTERVAL_MIN = 5  # matches the proposal's 5-minute target
-IRRIGATE_BELOW = 20.0     # environmental/ farmer watering baseline, matching ml/make_dataset.py
-IRRIGATE_GAIN = 25.0      # moisture percentage points added by that baseline
-SENSOR_NOISE = 0.15       # small sensor variation, matching ml/make_dataset.py
-
+READING_INTERVAL_MIN = 5
+IRRIGATE_BELOW = 20.0
+IRRIGATE_GAIN = 25.0
+SENSOR_NOISE = 0.15
 
 @dataclass
 class FieldState:
     node_id: str
-    moisture: float                 # percent, 0-100
-    dry_rate: float                 # percent lost per hour, field-specific
-    temp_base: float                # field-specific baseline temperature
+    moisture: float
+    dry_rate: float
+    temp_base: float
     humidity_base: float
     rain_chance_per_hour: float = 0.03
-    offline: bool = False
-    offline_until: datetime | None = None
-    flatline_until: datetime | None = None
-    flatline_value: float | None = None
-    fault_log: list = dc_field(default_factory=list)
 
 
-def make_fields() -> list[FieldState]:
-    # Slightly different per field, same as a real farm would be
+def make_fields():
     return [
-        FieldState("node-01", moisture=45, dry_rate=1.8, temp_base=27, humidity_base=58),
-        FieldState("node-02", moisture=30, dry_rate=2.4, temp_base=29, humidity_base=52),
-        FieldState("node-03", moisture=50, dry_rate=1.5, temp_base=26, humidity_base=61),
-        FieldState("node-04", moisture=22, dry_rate=2.1, temp_base=28, humidity_base=55),
+        FieldState("node-01", 45, 1.8, 27, 58),
+        FieldState("node-02", 30, 2.4, 29, 52),
+        FieldState("node-03", 50, 1.5, 26, 61),
+        FieldState("node-04", 22, 2.1, 28, 55),
     ]
 
 
-def diurnal_temp(base: float, sim_time: datetime) -> float:
-    """Warmer in the afternoon, cooler before dawn."""
+def diurnal_temp(base, sim_time):
     hour = sim_time.hour + sim_time.minute / 60
     swing = 6 * math.sin((hour - 9) / 24 * 2 * math.pi)
     return round(base + swing + random.uniform(-0.4, 0.4), 1)
 
 
-def diurnal_humidity(base: float, sim_time: datetime) -> float:
+def diurnal_humidity(base, sim_time):
     hour = sim_time.hour + sim_time.minute / 60
-    swing = -8 * math.sin((hour - 9) / 24 * 2 * math.pi)  # inverse of temp
+    swing = -8 * math.sin((hour - 9) / 24 * 2 * math.pi)
     return round(max(10, min(100, base + swing + random.uniform(-1.5, 1.5))), 1)
 
 
-def step_moisture(f: FieldState, minutes: int) -> float:
+def step_moisture(field, minutes):
     hours = minutes / 60
-    loss = f.dry_rate * hours * random.uniform(0.85, 1.15)
-    new_moisture = f.moisture - loss
-
-    # Chance of rain each simulated hour, applied pro-rated per step
-    if random.random() < f.rain_chance_per_hour * hours:
-        rain_gain = random.uniform(15, 35)
-        new_moisture += rain_gain
-        log.info(f"RAIN on {f.node_id}: +{rain_gain:.1f}% moisture")
-
-    # Match the ML dataset's normal farming baseline. This represents
-    # background/farmer watering, not an automated pump command.
-    if new_moisture <= IRRIGATE_BELOW:
-        new_moisture += IRRIGATE_GAIN
-        log.info(f"BACKGROUND WATERING on {f.node_id}: +{IRRIGATE_GAIN:.1f}% moisture")
-
-    f.moisture = max(2.0, min(100.0, new_moisture))
-    return f.moisture
+    moisture = field.moisture - field.dry_rate * hours * random.uniform(0.85, 1.15)
+    if random.random() < field.rain_chance_per_hour * hours:
+        moisture += random.uniform(15, 35)
+        log.info("RAIN on %s", field.node_id)
+    if moisture <= IRRIGATE_BELOW:
+        moisture += IRRIGATE_GAIN
+        log.info("BACKGROUND WATERING on %s", field.node_id)
+    field.moisture = max(2.0, min(100.0, moisture))
+    return field.moisture
 
 
-def maybe_inject_fault(f: FieldState, sim_time: datetime) -> str | None:
-    """Start, continue, and end faults; log transitions for labeled testing."""
-    if f.offline:
-        if f.offline_until is not None and sim_time < f.offline_until:
-            return "offline"
-
-        # The outage has ended. Resume normal processing on this same step.
-        f.offline = False
-        f.offline_until = None
-        log.info(f"FAULT END offline on {f.node_id}")
-
-    if f.flatline_until is not None:
-        if sim_time < f.flatline_until:
-            return "flatline"
-
-        f.flatline_until = None
-        f.flatline_value = None
-        log.info(f"FAULT END flatline on {f.node_id}")
-
-    roll = random.random()
-    if roll < 0.0006:
-        f.offline = True
-        f.offline_until = sim_time + timedelta(minutes=random.choice([15, 30, 60]))
-        log.info(f"FAULT START offline on {f.node_id} until {f.offline_until.isoformat()}")
-        return "offline"
-    if roll < 0.0010:
-        log.info(f"FAULT spike on {f.node_id}")
-        return "spike"
-    if roll < 0.0014:
-        duration = random.choice([30, 60, 120])
-        f.flatline_until = sim_time + timedelta(minutes=duration)
-        # The reported value is captured after the underlying sensor state
-        # advances for this reading, then held constant for the fault period.
-        log.info(
-            f"FAULT START flatline on {f.node_id} "
-            f"until {f.flatline_until.isoformat()} ({duration} simulated minutes)"
-        )
-        return "flatline"
-    return None
-
-
-def build_reading(f: FieldState, sim_time: datetime, minutes_elapsed: int) -> dict | None:
-    fault = maybe_inject_fault(f, sim_time)
-    moisture = step_moisture(f, minutes_elapsed)
-    # The sensor reports a slightly noisy, firmware-clamped measurement;
-    # the underlying soil state remains unchanged by measurement noise.
-    reported_moisture = max(0.0, min(100.0, moisture + random.gauss(0, SENSOR_NOISE)))
-    temperature = diurnal_temp(f.temp_base, sim_time)
-    humidity = diurnal_humidity(f.humidity_base, sim_time)
-
-    if fault == "offline":
-        return None  # node sends nothing at all
-    if fault == "spike":
-        reported_moisture = random.choice([999, -50, 250])
-    elif fault == "flatline":
-        if f.flatline_value is None:
-            f.flatline_value = reported_moisture
-        reported_moisture = f.flatline_value
-
+def normal_reading(field, sim_time, minutes):
+    moisture = step_moisture(field, minutes)
     return {
-        "node_id": f.node_id,
-        "soil_moisture": round(reported_moisture, 1),
-        "temperature": temperature,
-        "humidity": humidity,
+        "node_id": field.node_id,
+        "soil_moisture": round(max(0, min(100, moisture + random.gauss(0, SENSOR_NOISE))), 1),
+        "temperature": diurnal_temp(field.temp_base, sim_time),
+        "humidity": diurnal_humidity(field.humidity_base, sim_time),
         "timestamp": sim_time.isoformat(),
     }
 
 
-def post_reading(client: httpx.Client, reading: dict) -> None:
+def apply_sensor_scenario(reading, sensor, scenario, flatline_values):
+    """Override exactly one metric; the other sensor values stay untouched."""
+    if scenario == "normal":
+        return reading
+    if scenario == "offline":
+        return None
+
+    ranges = {
+        "humidity": (0.0, 100.0, 8.0, 108.0),
+        "temperature": (-5.0, 60.0, -10.0, 70.0),
+        "soil_moisture": (0.0, 100.0, 5.0, 110.0),
+    }
+    low, high, low_fault, high_fault = ranges[sensor]
+    current = reading[sensor]
+
+    if scenario == "low":
+        reading[sensor] = low_fault
+    elif scenario == "high":
+        reading[sensor] = high_fault
+    elif scenario == "spike":
+        reading[sensor] = high_fault
+    elif scenario == "flatline":
+        key = (reading["node_id"], sensor)
+        flatline_values.setdefault(key, current)
+        reading[sensor] = flatline_values[key]
+
+    log.info(
+        "TARGETED SENSOR TEST node=%s sensor=%s scenario=%s value=%s",
+        reading["node_id"], sensor, scenario, reading[sensor],
+    )
+    return reading
+
+
+def post_reading(client, reading):
     try:
-        r = client.post(API_URL, json=reading, timeout=5)
-        if r.status_code != 201:
-            log.warning(f"API rejected reading: {r.status_code} {r.text}")
-    except httpx.HTTPError as e:
-        log.error(f"Could not reach API at {API_URL}: {e}")
+        response = client.post(API_URL, json=reading, timeout=5)
+        if response.status_code != 201:
+            log.warning("API rejected reading: %s %s", response.status_code, response.text)
+        else:
+            log.info(
+                "POSTED %s moisture=%s temperature=%s humidity=%s valid=%s",
+                reading["node_id"], reading["soil_moisture"],
+                reading["temperature"], reading["humidity"],
+                response.json().get("valid"),
+            )
+    except httpx.HTTPError as exc:
+        log.error("Could not reach API at %s: %s", API_URL, exc)
 
 
-def run(fast: bool, hours: float | None, start: datetime | None = None) -> None:
+def run(fast=False, hours=None, sensor=None, scenario="normal", node=None, start=None):
     fields = make_fields()
+    if node:
+        fields = [field for field in fields if field.node_id == node]
     sim_time = start or datetime.now(timezone.utc)
     end_time = sim_time + timedelta(hours=hours) if hours else None
     sleep_seconds = 0.05 if fast else READING_INTERVAL_MIN * 60
+    flatline_values = {}
 
-    log.info(f"Starting simulation: fast={fast} hours={hours}")
+    mode = f"{sensor}/{scenario} on {node}" if sensor else "all sensors / natural variation"
+    log.info("Starting simulation: mode=%s fast=%s hours=%s", mode, fast, hours)
+
     with httpx.Client() as client:
         while end_time is None or sim_time < end_time:
-            for f in fields:
-                reading = build_reading(f, sim_time, READING_INTERVAL_MIN)
+            for field in fields:
+                reading = normal_reading(field, sim_time, READING_INTERVAL_MIN)
+                if sensor:
+                    reading = apply_sensor_scenario(reading, sensor, scenario, flatline_values)
                 if reading is not None:
                     post_reading(client, reading)
+                else:
+                    log.warning("SIMULATED NODE OFFLINE: %s", field.node_id)
             sim_time += timedelta(minutes=READING_INTERVAL_MIN)
             time.sleep(sleep_seconds)
 
@@ -202,7 +175,16 @@ def run(fast: bool, hours: float | None, start: datetime | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fast", action="store_true", help="advance quickly instead of real-time")
+    parser.add_argument("--fast", action="store_true", help="advance simulated time quickly")
     parser.add_argument("--hours", type=float, default=None, help="stop after N simulated hours")
+    parser.add_argument("--sensor", choices=["humidity", "temperature", "soil_moisture"],
+                        help="test one sensor independently; omit for normal farm simulation")
+    parser.add_argument("--scenario", choices=["normal", "low", "high", "spike", "flatline", "offline"],
+                        default="normal", help="target sensor behaviour")
+    parser.add_argument("--node", choices=NODE_IDS, help="limit the simulation to one field node")
     args = parser.parse_args()
-    run(fast=args.fast, hours=args.hours)
+    if args.scenario != "normal" and not args.sensor:
+        parser.error("--sensor is required when using a non-normal --scenario")
+    if args.scenario == "offline" and not args.sensor:
+        parser.error("--sensor is required for an offline test")
+    run(args.fast, args.hours, args.sensor, args.scenario, args.node)
