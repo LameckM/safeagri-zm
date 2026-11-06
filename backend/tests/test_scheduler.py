@@ -94,7 +94,8 @@ def test_stale_reading_raises_offline_alert_not_irrigation(client):
 
 
 def test_offline_alert_is_not_duplicated_on_repeated_runs(client):
-    post_reading(client, "node-04", moisture=10, minutes_ago=30)
+    post_reading(client, "node-04", moisture=10)
+    age_received_packet("node-04", 30)
     client.post("/schedule/run")
     client.post("/schedule/run")
 
