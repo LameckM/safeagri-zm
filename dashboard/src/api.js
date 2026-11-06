@@ -19,6 +19,7 @@ export const api = {
   fields: () => request("/fields"),
   latest: () => request("/latest"),
   alerts: () => request("/alerts"),
+  syncAlerts: () => request("/alerts/sync", { method: "POST" }),
   scheduleEvents: () => request("/schedule/events"),
   runSchedule: () => request("/schedule/run", { method: "POST" }),
 };
