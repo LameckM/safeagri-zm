@@ -11,14 +11,21 @@ LIMITS = {
 }
 
 
-def check_reading(soil_moisture: float, temperature: float, humidity: float) -> str | None:
-    """Return a flag like 'soil_moisture_out_of_range', or None if the reading is fine."""
+def check_reading_flags(soil_moisture: float, temperature: float, humidity: float) -> list[str]:
+    """Return every out-of-range metric, not just the first one."""
     values = {
         "soil_moisture": soil_moisture,
         "temperature": temperature,
         "humidity": humidity,
     }
-    for name, (low, high) in LIMITS.items():
-        if not (low <= values[name] <= high):
-            return f"{name}_out_of_range"
-    return None
+    return [
+        f"{name}_out_of_range"
+        for name, (low, high) in LIMITS.items()
+        if not (low <= values[name] <= high)
+    ]
+
+
+def check_reading(soil_moisture: float, temperature: float, humidity: float) -> str | None:
+    """Backward-compatible first flag, or None when all metrics are valid."""
+    flags = check_reading_flags(soil_moisture, temperature, humidity)
+    return flags[0] if flags else None
