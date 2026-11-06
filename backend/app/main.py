@@ -55,7 +55,7 @@ def create_reading(payload: ReadingIn):
 
     with get_conn() as conn:
         field = conn.execute(
-            "SELECT id FROM fields WHERE node_id = ?", (payload.node_id,)
+            "SELECT id, name FROM fields WHERE node_id = ?", (payload.node_id,)
         ).fetchone()
         if field is None:
             raise HTTPException(status_code=404, detail=f"Unknown node_id: {payload.node_id}")
@@ -76,7 +76,7 @@ def create_reading(payload: ReadingIn):
             # One active alert per field. Repeated bad samples update the
             # same alert instead of flooding the dashboard.
             message = (
-                f"{field['id']}: " + "; ".join(
+                f"{field['name']}: " + "; ".join(
                     f"{flag.removesuffix('_out_of_range').replace('_', ' ')} "
                     f"reading {getattr(payload, flag.removesuffix('_out_of_range'))} is out of range"
                     for flag in flags
