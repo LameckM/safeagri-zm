@@ -27,9 +27,9 @@ def test_good_reading_is_stored_without_timestamp(client):
     assert r.json()["valid"] is True
 
     latest = client.get("/latest").json()
-    assert len(latest) == 1
-    assert latest[0]["field_id"] == 2
-    assert latest[0]["soil_moisture"] == 18
+    assert len(latest) == 4
+    node_two = next(row for row in latest if row["field_id"] == 2)
+    assert node_two["soil_moisture"] == 18
 
 
 def test_out_of_range_reading_is_flagged_not_trusted(client):
@@ -40,7 +40,8 @@ def test_out_of_range_reading_is_flagged_not_trusted(client):
 
     # not in normal reads, and /latest still shows the last good value
     assert len(client.get("/readings").json()) == 1
-    assert client.get("/latest").json()[0]["soil_moisture"] == 18
+    node_two = next(row for row in client.get("/latest").json() if row["field_id"] == 2)
+    assert node_two["soil_moisture"] == 18
 
     # but it is kept for the anomaly tests
     assert len(client.get("/readings", params={"include_invalid": True}).json()) == 2
