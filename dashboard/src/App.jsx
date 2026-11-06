@@ -57,10 +57,10 @@ export default function App() {
     }
   }
 
-  const awaitingCount = fields.filter((f) => !readingsByField[f.id]).length;
+  const awaitingCount = fields.filter((f) => !readingsByField[f.id]?.last_seen_at).length;
   const offlineCount = fields.filter((f) => {
     const r = readingsByField[f.id];
-    if (!r) return false;
+    if (!r || !r.last_seen_at) return false;
     const mins = (Date.now() - new Date(r.last_seen_at || r.received_at || r.recorded_at).getTime()) / 60000;
     return mins > 15;
   }).length;
