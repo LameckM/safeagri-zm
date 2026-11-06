@@ -137,7 +137,8 @@ def latest_per_field():
     """Newest valid reading for each field. This is what the dashboard polls."""
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT r.*, f.name AS field_name
+            """SELECT r.*, f.name AS field_name,
+                      (SELECT MAX(all_r.received_at) FROM readings all_r WHERE all_r.field_id = r.field_id) AS last_seen_at
                FROM readings r JOIN fields f ON f.id = r.field_id
                WHERE r.id IN (SELECT MAX(id) FROM readings WHERE valid = 1 GROUP BY field_id)
                ORDER BY r.field_id"""
