@@ -34,7 +34,7 @@ def evaluate_field(conn, field_row):
 def _sync_alert(conn, field_id, kind, active, message, now_text):
     row = conn.execute("SELECT id FROM alerts WHERE field_id = ? AND kind = ? AND resolved = 0", (field_id, kind)).fetchone()
     if active and row:
-        conn.execute("UPDATE alerts SET message = ?, created_at = ? WHERE id = ?", (message, now_text, row["id"]))
+        conn.execute("UPDATE alerts SET message = ? WHERE id = ?", (message, row["id"]))
     elif active:
         conn.execute("INSERT INTO alerts (field_id, kind, message, created_at) VALUES (?, ?, ?, ?)", (field_id, kind, message, now_text))
     elif row:
