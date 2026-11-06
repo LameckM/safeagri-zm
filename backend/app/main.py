@@ -16,7 +16,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Smart Irrigation API")
+app = FastAPI(title="Smart Irrigation API", lifespan=lifespan)
 LOCAL_DASHBOARD_ORIGIN = (
     r"^https?://(localhost|127\.0\.0\.1|"
     r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
@@ -86,8 +86,8 @@ def create_reading(payload: ReadingIn):
             ).fetchone()
             if existing:
                 conn.execute(
-                    "UPDATE alerts SET message = ?, created_at = ? WHERE id = ?",
-                    (message, received_at, existing["id"]),
+                    "UPDATE alerts SET message = ? WHERE id = ?",
+                    (message, existing["id"]),
                 )
             else:
                 conn.execute(
