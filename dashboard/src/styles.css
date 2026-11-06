@@ -262,6 +262,7 @@ body {
 }
 .alert-row__kind--sensor_fault { background: var(--amber-tint); color: var(--amber); }
 .alert-row__kind--node_offline { background: var(--red-tint); color: var(--red); }
+.alert-row__kind--dry_soil { background: var(--amber-tint); color: var(--amber); }
 
 .alert-row__message, .log-row__detail { color: var(--ink); }
 .alert-row__time, .log-row__time { color: var(--ink-muted); white-space: nowrap; }
