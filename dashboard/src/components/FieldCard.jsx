@@ -34,7 +34,10 @@ function freshnessLabel(minutes) {
 
 export default function FieldCard({ field, reading }) {
   const moisture = reading?.soil_moisture ?? null;
-  const status = statusFor(moisture);
+  const baseStatus = statusFor(moisture);
+  const status = reading?.last_packet_valid === 0
+    ? { label: "Sensor fault", tone: "critical" }
+    : baseStatus;
   const mins = minutesAgo((reading?.last_seen_at ?? reading?.received_at ?? reading?.recorded_at));
   const stale = mins !== null && mins > 15;
 
@@ -66,7 +69,7 @@ export default function FieldCard({ field, reading }) {
         </div>
       </dl>
 
-      <p className="field-card__freshness">{stale ? "No reading in over 15 minutes" : freshnessLabel(mins)}</p>
+      <p className="field-card__freshness">{stale ? "No packet in over 15 minutes" : freshnessLabel(mins)}</p>
     </article>
   );
 }
