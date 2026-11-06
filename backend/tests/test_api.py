@@ -64,3 +64,35 @@ def test_client_timestamp_is_kept(client):
     client.post("/readings", json={**GOOD, "timestamp": "2026-09-19T14:05:00Z"})
     row = client.get("/readings").json()[0]
     assert row["recorded_at"].startswith("2026-09-19T14:05:00")
+
+
+
+def test_all_out_of_range_sensor_metrics_are_flagged_and_one_alert_updated(client):
+    bad = {**GOOD, "temperature": 75, "humidity": 110}
+    first = client.post("/readings", json=bad)
+    assert first.status_code == 201
+    assert first.json()["valid"] is False
+    assert first.json()["flag"] == "temperature_out_of_range,humidity_out_of_range"
+    assert len(client.get("/alerts").json()) == 1
+    client.post("/readings", json={**bad, "temperature": 80})
+    alerts = client.get("/alerts").json()
+    assert len(alerts) == 1
+    assert "80" in alerts[0]["message"]
+
+
+def test_valid_reading_resolves_sensor_fault_alert(client):
+    client.post("/readings", json={**GOOD, "humidity": 110})
+    assert len(client.get("/alerts").json()) == 1
+    client.post("/readings", json=GOOD)
+    assert client.get("/alerts").json() == []
+    assert len(client.get("/alerts", params={"resolved": True}).json()) == 1
+
+
+def test_latest_returns_all_fields_and_latest_packet_health(client):
+    client.post("/readings", json=GOOD)
+    client.post("/readings", json={**GOOD, "humidity": 110})
+    rows = client.get("/latest").json()
+    assert len(rows) == 4
+    node_two = next(row for row in rows if row["field_id"] == 2)
+    assert node_two["soil_moisture"] == 18
+    assert node_two["last_packet_valid"] == 0
