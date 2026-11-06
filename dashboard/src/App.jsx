@@ -18,6 +18,8 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
+      // Sync stale-node alerts first, then read the dashboard snapshot.
+      await api.syncAlerts();
       const [fieldList, latest, alertList, eventList] = await Promise.all([
         api.fields(),
         api.latest(),
