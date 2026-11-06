@@ -14,7 +14,7 @@ export default function AlertsPanel({ alerts }) {
     <section className="panel">
       <h2>Alerts</h2>
       {alerts.length === 0 ? (
-        <p className="panel__empty">No active alerts. Every sensor is reporting normal values.</p>
+        <p className="panel__empty">No active alerts.</p>
       ) : (
         <ul className="panel__list">
           {alerts.map((alert) => (
@@ -22,7 +22,7 @@ export default function AlertsPanel({ alerts }) {
               <span className={`alert-row__kind alert-row__kind--${alert.kind}`}>
                 {KIND_LABEL[alert.kind] || alert.kind}
               </span>
-              <span className="alert-row__message">{alert.message}</span>
+              <span className="alert-row__message">{alert.field_name}: {alert.message}</span>
               <span className="alert-row__time">{timeLabel(alert.created_at)}</span>
             </li>
           ))}
