@@ -35,7 +35,7 @@ function freshnessLabel(minutes) {
 export default function FieldCard({ field, reading }) {
   const moisture = reading?.soil_moisture ?? null;
   const status = statusFor(moisture);
-  const mins = minutesAgo(reading?.recorded_at);
+  const mins = minutesAgo((reading?.last_seen_at ?? reading?.received_at ?? reading?.recorded_at));
   const stale = mins !== null && mins > 15;
 
   return (
