@@ -137,12 +137,17 @@ def latest_per_field():
     """Newest valid reading for each field. This is what the dashboard polls."""
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT r.*, f.name AS field_name,
-                      (SELECT MAX(all_r.received_at) FROM readings all_r WHERE all_r.field_id = r.field_id) AS last_seen_at,
-                      (SELECT last_r.valid FROM readings last_r WHERE last_r.field_id = r.field_id ORDER BY last_r.received_at DESC, last_r.id DESC LIMIT 1) AS last_packet_valid
-               FROM readings r JOIN fields f ON f.id = r.field_id
-               WHERE r.id IN (SELECT MAX(id) FROM readings WHERE valid = 1 GROUP BY field_id)
-               ORDER BY r.field_id"""
+            """SELECT f.id AS field_id, f.name AS field_name,
+                      r.id, r.soil_moisture, r.temperature, r.humidity,
+                      r.recorded_at, r.received_at, r.valid, r.flag,
+                      (SELECT MAX(all_r.received_at) FROM readings all_r WHERE all_r.field_id = f.id) AS last_seen_at,
+                      (SELECT last_r.valid FROM readings last_r WHERE last_r.field_id = f.id ORDER BY last_r.received_at DESC, last_r.id DESC LIMIT 1) AS last_packet_valid
+               FROM fields f
+               LEFT JOIN readings r ON r.id = (
+                   SELECT MAX(valid_r.id) FROM readings valid_r
+                   WHERE valid_r.field_id = f.id AND valid_r.valid = 1
+               )
+               ORDER BY f.id"""
         ).fetchall()
     return [dict(r) for r in rows]
 
