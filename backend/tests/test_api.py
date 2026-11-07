@@ -8,9 +8,20 @@ from app.main import app
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setenv("SAFEAGRI_SECRET_KEY", "test-secret-key-for-safeagri-tests-only")
+    monkeypatch.setenv("SAFEAGRI_INITIAL_SETUP_KEY", "test-initial-setup-key")
     with TestClient(app) as c:
+        response = c.post("/auth/register", json={
+            "full_name": "Test Farmer",
+            "email": "farmer@example.com",
+            "password": "test-password-123",
+            "farm_name": "Test Farm",
+            "location": "Luanshya",
+            "setup_key": "test-initial-setup-key",
+        })
+        assert response.status_code == 201, response.text
+        c.headers["Authorization"] = "Bearer " + response.json()["access_token"]
         yield c
-
 
 GOOD = {"node_id": "node-02", "soil_moisture": 18, "temperature": 29, "humidity": 54}
 
@@ -19,13 +30,13 @@ def test_seeded_fields(client):
     fields = client.get("/fields").json()
     assert len(fields) == 4
     assert fields[1]["node_id"] == "node-02"
+    assert all(field["farm_id"] == 1 for field in fields)
 
 
 def test_good_reading_is_stored_without_timestamp(client):
     r = client.post("/readings", json=GOOD)
     assert r.status_code == 201
     assert r.json()["valid"] is True
-
     latest = client.get("/latest").json()
     assert len(latest) == 4
     node_two = next(row for row in latest if row["field_id"] == 2)
@@ -37,15 +48,10 @@ def test_out_of_range_reading_is_flagged_not_trusted(client):
     r = client.post("/readings", json={**GOOD, "soil_moisture": 999})
     assert r.status_code == 201
     assert r.json() == {"id": 2, "field_id": 2, "valid": False, "flag": "soil_moisture_out_of_range"}
-
-    # not in normal reads, and /latest still shows the last good value
     assert len(client.get("/readings").json()) == 1
     node_two = next(row for row in client.get("/latest").json() if row["field_id"] == 2)
     assert node_two["soil_moisture"] == 18
-
-    # but it is kept for the anomaly tests
     assert len(client.get("/readings", params={"include_invalid": True}).json()) == 2
-
     alerts = client.get("/alerts").json()
     assert len(alerts) == 1
     assert alerts[0]["kind"] == "sensor_fault"
@@ -65,7 +71,6 @@ def test_client_timestamp_is_kept(client):
     client.post("/readings", json={**GOOD, "timestamp": "2026-09-19T14:05:00Z"})
     row = client.get("/readings").json()[0]
     assert row["recorded_at"].startswith("2026-09-19T14:05:00")
-
 
 
 def test_all_out_of_range_sensor_metrics_are_flagged_and_one_alert_updated(client):
@@ -97,3 +102,64 @@ def test_latest_returns_all_fields_and_latest_packet_health(client):
     node_two = next(row for row in rows if row["field_id"] == 2)
     assert node_two["soil_moisture"] == 18
     assert node_two["last_packet_valid"] == 0
+
+
+def test_protected_endpoints_reject_missing_token(client):
+    client.headers.pop("Authorization")
+    for path in ("/auth/me", "/fields", "/readings", "/latest", "/alerts", "/schedule/events"):
+        assert client.get(path).status_code == 401
+
+
+def test_second_farmer_cannot_see_first_farm_fields_or_data(client):
+    client.post("/readings", json=GOOD)
+    second = client.post("/auth/register", json={
+        "full_name": "Second Farmer",
+        "email": "second@example.com",
+        "password": "another-password-123",
+        "farm_name": "Second Farm",
+        "location": "Ndola",
+    })
+    assert second.status_code == 201
+    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
+    assert client.get("/fields").json() == []
+    assert client.get("/latest").json() == []
+    assert client.get("/readings").json() == []
+    assert client.get("/alerts").json() == []
+    assert client.get("/schedule/events").json() == []
+
+
+def test_field_creation_and_update_are_farm_scoped(client):
+    created = client.post("/fields", json={"name": "North Plot", "node_id": "node-new"})
+    assert created.status_code == 201
+    field_id = created.json()["id"]
+    assert created.json()["farm_id"] == 1
+    updated = client.patch(f"/fields/{field_id}", json={"name": "North Maize"})
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "North Maize"
+    second = client.post("/auth/register", json={
+        "full_name": "Second Farmer", "email": "second@example.com",
+        "password": "another-password-123", "farm_name": "Second Farm",
+    })
+    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
+    assert client.patch(f"/fields/{field_id}", json={"name": "Stolen"}).status_code == 404
+
+
+def test_login_and_current_user(client):
+    client.headers.pop("Authorization")
+    response = client.post("/auth/login", json={"email": "farmer@example.com", "password": "test-password-123"})
+    assert response.status_code == 200
+    client.headers["Authorization"] = "Bearer " + response.json()["access_token"]
+    assert client.get("/auth/me").json()["email"] == "farmer@example.com"
+
+
+def test_registration_requires_setup_key_for_first_account(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "setup.db")
+    monkeypatch.setenv("SAFEAGRI_SECRET_KEY", "test-secret-key-for-safeagri-tests-only")
+    monkeypatch.setenv("SAFEAGRI_INITIAL_SETUP_KEY", "correct-setup-key")
+    with TestClient(app) as c:
+        payload = {
+            "full_name": "First Farmer", "email": "first@example.com",
+            "password": "first-password-123", "farm_name": "Legacy Farm",
+        }
+        assert c.post("/auth/register", json=payload).status_code == 403
+        assert c.post("/auth/register", json={**payload, "setup_key": "correct-setup-key"}).status_code == 201
