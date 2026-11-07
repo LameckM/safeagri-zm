@@ -13,8 +13,10 @@ spec.loader.exec_module(simulator)
 
 
 class FakeResponse:
-    status_code = 201
     text = ""
+
+    def __init__(self, status_code):
+        self.status_code = status_code
 
     @staticmethod
     def json():
@@ -36,7 +38,7 @@ class FakeClient:
 
     def post(self, url, json=None, timeout=None):
         self.posts.append((url, json))
-        return FakeResponse()
+        return FakeResponse(200 if url.endswith("/alerts/sync") else 201)
 
 
 @pytest.fixture(autouse=True)
