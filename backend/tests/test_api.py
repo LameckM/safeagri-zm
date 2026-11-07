@@ -113,10 +113,10 @@ def test_owner_can_rename_demo_field(client):
 
 def test_login_and_current_user(client):
     client.headers.pop("Authorization")
-    response = client.post("/auth/login", json={"email": "owner@safeagri.local", "password": "test-owner-password-123"})
+    response = client.post("/auth/login", json={"email": "owner@example.com", "password": "test-owner-password-123"})
     assert response.status_code == 200
     client.headers["Authorization"] = "Bearer " + response.json()["access_token"]
-    assert client.get("/auth/me").json()["email"] == "owner@safeagri.local"
+    assert client.get("/auth/me").json()["email"] == "owner@example.com"
 
 
 def test_owner_account_is_seeded_from_environment(tmp_path, monkeypatch):
@@ -216,7 +216,7 @@ def test_demo_sensor_fault_controls_are_owner_protected(client):
     client.headers.pop("Authorization")
     assert client.post("/demo/fault", json={"field_id": 1, "metric": "humidity", "scenario": "high"}).status_code == 401
     client.headers["Authorization"] = "Bearer " + client.post("/auth/login", json={
-        "email": "owner@safeagri.local", "password": "test-owner-password-123"
+        "email": "owner@example.com", "password": "test-owner-password-123"
     }).json()["access_token"]
     fields = client.get("/fields").json()
     field_id = fields[0]["id"]
