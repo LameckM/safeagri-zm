@@ -46,7 +46,6 @@ export const api = {
   login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request("/auth/me"),
   fields: () => request("/fields"),
-  createField: (payload) => request("/fields", { method: "POST", body: JSON.stringify(payload) }),
   updateField: (fieldId, payload) => request(`/fields/${fieldId}`, { method: "PATCH", body: JSON.stringify(payload) }),
   latest: () => request("/latest"),
   alerts: () => request("/alerts"),
