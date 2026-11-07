@@ -103,7 +103,7 @@ python -m backend.node_control node-01 offline
 python -m backend.node_control node-01 online
 ```
 
-Replace `node-01` with `node-02`, `node-03`, or `node-04`. Offline status is stored immediately and creates a node-offline alert on the next background synchronization cycle. Setting a node online resumes simulated readings and clears the offline alert after the next cycle.
+Replace `node-01` with `node-02`, `node-03`, or `node-04`. Offline status is stored and its node-offline alert is synchronized immediately by the command. Setting a node online clears the offline alert immediately; simulated readings resume on the next five-second cycle.
 
 Optional demo settings:
 
@@ -149,7 +149,7 @@ Content-Type: application/json
 
 A reading with a missing or wrong key, an unknown `node_id`, or a node that has no key yet all get the same `401`, so the API does not reveal which node IDs exist. The server log records which of those it was.
 
-Upgrading an existing database adds the key column automatically, but every node starts with no key and is rejected until you issue one. `POST /alerts/sync` now requires a farmer login and only touches that farmer's own fields.
+Upgrading an existing database adds the key column automatically, but every node starts with no key and is rejected until you issue one. `POST /alerts/sync` requires the project owner's login and only touches the owner's demonstration fields.
 
 Keys travel in a plain header, so anything on the network path can read them over HTTP. Put the API behind HTTPS before any device reports over a network you do not control.
 
