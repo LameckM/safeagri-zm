@@ -213,6 +213,11 @@ def test_temperature_flatline_is_detected(client):
 def test_demo_sensor_fault_controls_are_owner_protected(client):
     from app.demo_simulator import FAULTS
     FAULTS.clear()
+    client.headers.pop("Authorization")
+    assert client.post("/demo/fault", json={"field_id": 1, "metric": "humidity", "scenario": "high"}).status_code == 401
+    client.headers["Authorization"] = "Bearer " + client.post("/auth/login", json={
+        "email": "owner@safeagri.local", "password": "test-owner-password-123"
+    }).json()["access_token"]
     fields = client.get("/fields").json()
     field_id = fields[0]["id"]
     started = client.post("/demo/fault", json={"field_id": field_id, "metric": "humidity", "scenario": "high"})
