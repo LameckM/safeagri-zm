@@ -158,7 +158,7 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None):
     end = moment + timedelta(hours=hours) if hours is not None else None
     held_values = {}
     delay = 0.05 if fast else INTERVAL_MIN * 60
-    offline_baseline_sent = False
+    offline_armed = set()
 
     log.info(
         "Starting simulation scenario=%s sensor=%s target=%s fast=%s interval=%ss",
@@ -175,9 +175,9 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None):
                 if is_target and scenario == "offline":
                     # Send one fresh baseline packet first. Subsequent cycles
                     # deliberately omit this node so the backend can age it out.
-                    if not offline_baseline_sent:
+                    if field.node_id not in offline_armed:
                         post_reading(client, reading)
-                        offline_baseline_sent = True
+                        offline_armed.add(field.node_id)
                         log.warning(
                             "OFFLINE TEST ARMED for %s: no more packets will be sent",
                             field.node_id,
