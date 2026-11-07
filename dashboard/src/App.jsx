@@ -22,7 +22,10 @@ function AuthScreen({ onAuthenticated }) {
       authStore.setToken(result.access_token);
       onAuthenticated(result.user);
     } catch (err) {
-      setError(err.message || "Unable to sign in. Please check your credentials.");
+      if (err.status === 401) authStore.clearToken();
+      setError(err.status === 401
+        ? "The email or password is incorrect. Check the owner credentials in backend/.env."
+        : (err.message || "Unable to sign in. Check that the backend is running."));
     } finally {
       setBusy(false);
     }
