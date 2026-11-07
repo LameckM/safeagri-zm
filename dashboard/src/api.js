@@ -52,4 +52,6 @@ export const api = {
   syncAlerts: () => request("/alerts/sync", { method: "POST" }),
   scheduleEvents: () => request("/schedule/events"),
   runSchedule: () => request("/schedule/run", { method: "POST" }),
+  startDemoFault: (payload) => request("/demo/fault", { method: "POST", body: JSON.stringify(payload) }),
+  clearDemoFault: (payload) => request("/demo/fault/clear", { method: "POST", body: JSON.stringify(payload) }),
 };
