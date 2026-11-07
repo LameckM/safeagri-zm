@@ -63,7 +63,6 @@ CREATE TABLE IF NOT EXISTS irrigation_events (
     duration_min INTEGER,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_fields_farm ON fields(farm_id);
 CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id);
 """
 
@@ -101,6 +100,8 @@ def _migrate_existing_database(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(fields)")}
     if "farm_id" not in columns:
         conn.execute("ALTER TABLE fields ADD COLUMN farm_id INTEGER REFERENCES farms(id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_fields_farm ON fields(farm_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id)")
 
 
 def init_db() -> None:
