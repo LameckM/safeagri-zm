@@ -4,7 +4,9 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(os.getenv("DB_PATH", "data/irrigation.db"))
+from .config import DATABASE_PATH
+
+DB_PATH = DATABASE_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS farms (
