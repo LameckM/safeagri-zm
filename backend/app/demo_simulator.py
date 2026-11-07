@@ -44,7 +44,7 @@ def clear_demo_fault(node_id):
 
 
 def _reading(node_id, state, fault):
-    state["moisture"] = max(3.0, min(95.0, state["moisture"] - random.uniform(0.01, 0.08)))
+    state["moisture"] = max(3.0, min(95.0, state["moisture"] - random.uniform(0.12, 0.25)))
     state["temp"] = round(max(18, min(42, state["temp"] + random.uniform(-0.5, 0.5))), 1)
     state["humidity"] = round(max(25, min(90, state["humidity"] + random.uniform(-1.2, 1.2))), 1)
     result = {
