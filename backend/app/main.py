@@ -13,7 +13,7 @@ from . import auth
 from .db import get_conn, init_db
 from .scheduler import run_schedule, sync_node_alerts
 from .schemas import FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
-from .validation import check_reading_flags, check_trend_flags, describe_flag
+from .validation import check_metric_flatline, check_reading_flags, check_trend_flags, describe_flag
 
 log = logging.getLogger("safeagri")
 
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SafeAgri Smart Irrigation API", lifespan=lifespan)
 LOCAL_DASHBOARD_ORIGIN = (
-    r"^https?://(localhost|127\.0\.1|"
+    r"^https?://(localhost|127\.0\.0\.1|"
     r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
     r"192\.168\.\d{1,3}\.\d{1,3}|"
     r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})"
@@ -219,7 +219,7 @@ def create_reading(payload: ReadingIn, x_node_key: str | None = Header(default=N
             log.warning("Reading rejected for node %r: %s", payload.node_id, reason)
             raise HTTPException(status_code=401, detail="Invalid node credentials")
         recent = conn.execute(
-            "SELECT soil_moisture FROM readings WHERE field_id = ? ORDER BY id DESC LIMIT 10",
+            "SELECT soil_moisture, temperature, humidity FROM readings WHERE field_id = ? ORDER BY id DESC LIMIT 10",
             (field["id"],),
         ).fetchall()
         last_ok = conn.execute(
@@ -228,6 +228,8 @@ def create_reading(payload: ReadingIn, x_node_key: str | None = Header(default=N
                ORDER BY id DESC LIMIT 1""",
             (field["id"],),
         ).fetchone()
+        flags += check_metric_flatline("temperature", payload.temperature, [row["temperature"] for row in recent])
+        flags += check_metric_flatline("humidity", payload.humidity, [row["humidity"] for row in recent])
         flags += check_trend_flags(
             payload.soil_moisture,
             recorded_at,
