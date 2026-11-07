@@ -131,11 +131,11 @@ python -m pytest
 
 The tests use a temporary SQLite database; they do not need to overwrite the normal local database.
 
-## Sensor node keys
+## Sensor node keys (for later ESP32 integration)
 
-Every reading must carry the key of the node that sent it, in an `X-Node-Key` header. Without it anyone who can reach the API could post fake moisture values and steer irrigation decisions.
+The automatic defence simulator writes demo readings directly to the local database. The protected sensor-reading API remains available for the later hardware stage. Every real device reading must carry that node's key in an `X-Node-Key` header. Without it anyone who can reach the API could post fake moisture values and steer irrigation decisions.
 
-A logged-in farmer issues a key with `POST /fields/{field_id}/node-key`. The response contains the key once and the server keeps only its hash, so write it into the device firmware straight away. Issuing a new key for a field immediately stops the old one working. `GET /fields` shows `has_node_key` for each field but never the key.
+The project owner issues a key with `POST /fields/{field_id}/node-key`. The response contains the key once and the server keeps only its hash, so write it into the device firmware securely. Issuing a new key for a field immediately stops the old one working. `GET /fields` shows `has_node_key` for each field but never the key.
 
 A device sends, for example:
 
