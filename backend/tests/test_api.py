@@ -155,7 +155,7 @@ _BASE = datetime(2026, 9, 19, 14, 0, tzinfo=timezone.utc)
 
 
 def _send(client, moisture, minutes):
-    body = {**GOOD, "soil_moisture": moisture, "timestamp": (_BASE + timedelta(minutes=minutes)).isoformat()}
+    body = {**GOOD, "soil_moisture": moisture, "temperature": 29.0 + minutes / 100, "humidity": 54.0 + minutes / 100, "timestamp": (_BASE + timedelta(minutes=minutes)).isoformat()}
     return client.post("/readings", json=body).json()
 
 
