@@ -113,10 +113,10 @@ def test_owner_can_rename_demo_field(client):
 
 def test_login_and_current_user(client):
     client.headers.pop("Authorization")
-    response = client.post("/auth/login", json={"email": "farmer@example.com", "password": "test-password-123"})
+    response = client.post("/auth/login", json={"email": "owner@safeagri.local", "password": "test-owner-password-123"})
     assert response.status_code == 200
     client.headers["Authorization"] = "Bearer " + response.json()["access_token"]
-    assert client.get("/auth/me").json()["email"] == "farmer@example.com"
+    assert client.get("/auth/me").json()["email"] == "owner@safeagri.local"
 
 
 def test_owner_account_is_seeded_from_environment(tmp_path, monkeypatch):
