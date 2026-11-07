@@ -95,6 +95,11 @@ export default function App() {
   const [connectionError, setConnectionError] = useState(null);
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState(null);
+  const [faultField, setFaultField] = useState("1");
+  const [faultMetric, setFaultMetric] = useState("humidity");
+  const [faultScenario, setFaultScenario] = useState("high");
+  const [faultBusy, setFaultBusy] = useState(false);
+  const [faultMessage, setFaultMessage] = useState("");
 
   const logout = useCallback(() => {
     authStore.clearToken();
@@ -146,6 +151,35 @@ export default function App() {
     return () => clearInterval(id);
   }, [user, refresh]);
 
+  async function handleFaultStart(event) {
+    event.preventDefault();
+    setFaultBusy(true);
+    setFaultMessage("");
+    try {
+      const result = await api.startDemoFault({ field_id: Number(faultField), metric: faultMetric, scenario: faultScenario });
+      setFaultMessage(`Fault active: ${result.node_id} · ${faultMetric} · ${faultScenario}`);
+      await refresh();
+    } catch (err) {
+      setFaultMessage(err.message || "Could not start sensor fault.");
+    } finally {
+      setFaultBusy(false);
+    }
+  }
+
+  async function handleFaultClear() {
+    setFaultBusy(true);
+    setFaultMessage("");
+    try {
+      const result = await api.clearDemoFault({ field_id: Number(faultField) });
+      setFaultMessage(`Fault cleared for ${result.node_id}. Normal readings will resume.`);
+      await refresh();
+    } catch (err) {
+      setFaultMessage(err.message || "Could not clear sensor fault.");
+    } finally {
+      setFaultBusy(false);
+    }
+  }
+
   async function handleCheckNow() {
     setChecking(true);
     try {
@@ -196,6 +230,39 @@ export default function App() {
         </button>
         {lastChecked && <span className="actions__note">Last manual check at {lastChecked.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
       </div>
+
+      <section className="panel demo-controls">
+        <h2>Sensor fault demonstration</h2>
+        <p className="panel__empty">Choose a field and inject an abnormal sensor value. The test remains active until you clear it.</p>
+        <form className="demo-controls__form" onSubmit={handleFaultStart}>
+          <label>Demo field
+            <select value={faultField} onChange={(event) => setFaultField(event.target.value)}>
+              {fields.map((field) => <option key={field.id} value={field.id}>{field.name} ({field.node_id})</option>)}
+            </select>
+          </label>
+          <label>Sensor
+            <select value={faultMetric} onChange={(event) => setFaultMetric(event.target.value)}>
+              <option value="humidity">Humidity</option>
+              <option value="temperature">Temperature</option>
+              <option value="soil_moisture">Soil moisture / water</option>
+            </select>
+          </label>
+          <label>Fault type
+            <select value={faultScenario} onChange={(event) => setFaultScenario(event.target.value)}>
+              <option value="high">Abnormally high</option>
+              <option value="low">Abnormally low</option>
+              <option value="flatline">Stuck / flatline</option>
+            </select>
+          </label>
+          <button className="check-button" type="submit" disabled={faultBusy || fields.length === 0}>
+            {faultBusy ? "Applying..." : "Start sensor fault"}
+          </button>
+          <button className="logout-button" type="button" onClick={handleFaultClear} disabled={faultBusy || fields.length === 0}>
+            Clear fault / restore normal
+          </button>
+        </form>
+        {faultMessage && <p className="demo-controls__message" role="status">{faultMessage}</p>}
+      </section>
 
       <div className="panel-grid">
         <AlertsPanel alerts={alerts} />
