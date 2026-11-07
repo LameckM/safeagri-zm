@@ -162,3 +162,26 @@ def test_background_loop_can_be_disabled(make_client):
         assert post_reading(c, "node-01", 18).status_code == 201
         time.sleep(0.4)
         assert c.get("/schedule/events").json() == []
+
+
+
+def test_terminal_forced_offline_is_immediate_and_recovers(client):
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO node_status (node_id, online, updated_at) VALUES ('node-02', 0, ?) "
+            "ON CONFLICT(node_id) DO UPDATE SET online = 0",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+    client.post("/alerts/sync")
+    alerts = client.get("/alerts").json()
+    assert any(a["kind"] == "node_offline" and a["field_id"] == 2 for a in alerts)
+    decisions = client.post("/schedule/run").json()
+    node_two = next(item for item in decisions if item["field_id"] == 2)
+    assert node_two["action"] == "skip"
+    assert node_two["reason"] == "node_offline"
+
+    with db.get_conn() as conn:
+        conn.execute("UPDATE node_status SET online = 1 WHERE node_id = 'node-02'")
+    post_reading(client, "node-02", moisture=40)
+    client.post("/alerts/sync")
+    assert not any(a["kind"] == "node_offline" and a["field_id"] == 2 for a in client.get("/alerts").json())
