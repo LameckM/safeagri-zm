@@ -110,18 +110,20 @@ async def demo_simulation_loop():
     log.info("Automatic demo sensor simulation started (interval=%ss)", interval)
     while True:
         try:
+            now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             with get_conn() as conn:
                 for node_id in FIELDS:
                     conn.execute("INSERT OR IGNORE INTO node_status (node_id, online, updated_at) VALUES (?, 1, ?)",
-                                 (node_id, datetime.now(timezone.utc).isoformat()))
-                    status = conn.execute("SELECT online FROM node_status WHERE node_id = ?", (node_id,)).fetchone()
-                    if status and status["online"]:
-                        with FAULT_LOCK:
-                            fault = FAULTS.get(node_id)
-                            if fault:
-                                fault = dict(fault)
-                        reading = _reading(node_id, FIELDS[node_id], fault)
-                        _store_reading(node_id, reading)
+                                 (node_id, now))
+                statuses = {row["node_id"]: bool(row["online"]) for row in
+                            conn.execute("SELECT node_id, online FROM node_status").fetchall()}
+            for node_id, state in FIELDS.items():
+                if not statuses.get(node_id, True):
+                    continue
+                with FAULT_LOCK:
+                    fault = FAULTS.get(node_id)
+                    reading = _reading(node_id, state, fault) if fault else _reading(node_id, state, None)
+                _store_reading(node_id, reading)
             from .scheduler import sync_node_alerts
             sync_node_alerts()
         except asyncio.CancelledError:
