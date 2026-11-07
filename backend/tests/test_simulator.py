@@ -1,5 +1,6 @@
 """Regression tests for targeted sensor faults and node isolation."""
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 SIMULATOR_PATH = Path(__file__).resolve().parents[2] / "simulator" / "simulate.py"
 spec = importlib.util.spec_from_file_location("safeagri_simulator", SIMULATOR_PATH)
 simulator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = simulator
 spec.loader.exec_module(simulator)
 
 
