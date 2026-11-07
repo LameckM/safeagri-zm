@@ -6,7 +6,7 @@ Run from the repository root:
 """
 import argparse
 from datetime import datetime, timezone
-from app.db import init_db, get_conn
+from backend.app.db import init_db, get_conn
 
 NODES = ("node-01", "node-02", "node-03", "node-04")
 
