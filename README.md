@@ -22,24 +22,16 @@ safeagri-zm/
 
 ## 1. Configure the project owner (first installation)
 
-The defence build uses one owner account. Public registration is disabled. Set the owner credentials once in PowerShell; they are read by the backend at startup and the owner account is created or refreshed in SQLite. Choose your own password and keep it private.
+Owner login is configured in one local file, `backend/.env`. Public registration is disabled. From the repository root in PowerShell:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_EMAIL", "owner@example.com", "User")
-[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_PASSWORD", "replace-with-a-long-private-password", "User")
-[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_NAME", "Project Owner", "User")
-[Environment]::SetEnvironmentVariable("SAFEAGRI_FARM_NAME", "Kafubu Demonstration Farm", "User")
-[Environment]::SetEnvironmentVariable("SAFEAGRI_FARM_LOCATION", "Kafubu Block, Luanshya", "User")
-
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-$bytes = New-Object byte[] 48
-$rng.GetBytes($bytes)
-$secret = [Convert]::ToBase64String($bytes)
-$rng.Dispose()
-[Environment]::SetEnvironmentVariable("SAFEAGRI_SECRET_KEY", $secret, "User")
+Copy-Item backend/.env.example backend/.env
+notepad backend/.env
 ```
 
-Open a new PowerShell terminal after setting these values. Do not change the signing secret after setup, because doing so invalidates active login tokens. The owner email and password can be changed in the Windows user environment settings or with the commands above; restarting the backend applies the new credentials.
+Set your own `SAFEAGRI_OWNER_EMAIL`, `SAFEAGRI_OWNER_PASSWORD` (at least 10 characters), and `SAFEAGRI_SECRET_KEY` (a long random secret). Keep the same secret between restarts. The backend creates or updates the single owner account at startup, so the credentials in this file are the credentials accepted by the login screen. You can change the owner email or password in this file and restart the backend to apply the change.
+
+The database is always stored at `backend/data/irrigation.db`, regardless of which directory you use to start Uvicorn. Keep this file to preserve readings and fields.
 
 ## 2. Start the backend
 
