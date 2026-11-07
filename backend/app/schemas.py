@@ -1,19 +1,35 @@
 from datetime import datetime
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from pydantic import BaseModel, Field
+class RegisterIn(BaseModel):
+    full_name: str = Field(min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=10, max_length=128)
+    farm_name: str = Field(min_length=2, max_length=120)
+    location: str | None = Field(default=None, max_length=160)
+    setup_key: str | None = Field(default=None, max_length=256)
 
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+class FieldCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    node_id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    crop: str = Field(default="maize", min_length=1, max_length=40)
+
+class FieldUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    crop: str | None = Field(default=None, min_length=1, max_length=40)
 
 class ReadingIn(BaseModel):
     """One sensor reading, exactly as the ESP32 will send it later."""
-
     node_id: str = Field(min_length=1, max_length=32)
     soil_moisture: float = Field(allow_inf_nan=False)
     temperature: float = Field(allow_inf_nan=False)
     humidity: float = Field(allow_inf_nan=False)
-    # Optional: an ESP32 without a synced clock can leave it out and the
-    # server stamps the reading on arrival.
     timestamp: datetime | None = None
-
 
 class ReadingOut(BaseModel):
     id: int
