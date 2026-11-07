@@ -1,117 +1,94 @@
-"""Rule-based irrigation scheduler.
-
-No ML here on purpose. This is the baseline every field gets irrigated
-against right now, and it's also the baseline the ML model has to beat
-later before it earns a place in the project.
-
-Logic, in order, per field:
-  1. No reading at all, or the latest reading is older than STALE_MINUTES:
-     treat the node as offline. Do nothing, raise an alert.
-  2. Moisture at or above WET_THRESHOLD: skip. Never irrigate soil that's
-     already wet, even if something else asked for it.
-  3. Moisture at or below DRY_THRESHOLD: irrigate. Duration scales with
-     how far below TARGET_MOISTURE the field is, capped at MAX_DURATION_MIN.
-  4. Anything in between: skip, moisture is fine.
-"""
+"""Farm-scoped rule-based irrigation scheduler and alert synchronization."""
+import os
 from datetime import datetime, timedelta, timezone
-
 from .db import get_conn
 
-DRY_THRESHOLD = 25.0       # percent; at or below this, irrigation is needed
-WET_THRESHOLD = 60.0       # percent; at or above this, never irrigate
-TARGET_MOISTURE = 45.0     # percent; what a irrigation run aims to reach
-STALE_MINUTES = 15         # no reading this recent means the node is offline
-MIN_DURATION_MIN = 5
-MAX_DURATION_MIN = 30
-MINUTES_PER_PERCENT = 1.0  # how many minutes of watering per % moisture needed
+DRY_THRESHOLD, WET_THRESHOLD, TARGET_MOISTURE = 25.0, 60.0, 45.0
+STALE_MINUTES = float(os.getenv("SAFEAGRI_STALE_MINUTES", "15"))
+MIN_DURATION_MIN, MAX_DURATION_MIN = 5, 30
 
+def _latest_packet(conn, field_id):
+    return conn.execute("SELECT * FROM readings WHERE field_id = ? ORDER BY received_at DESC, id DESC LIMIT 1", (field_id,)).fetchone()
 
-def _duration_for(current_moisture: float) -> int:
-    gap = TARGET_MOISTURE - current_moisture
-    minutes = round(gap * MINUTES_PER_PERCENT)
-    return max(MIN_DURATION_MIN, min(MAX_DURATION_MIN, minutes))
+def _is_stale(received_at, now):
+    stamp = datetime.fromisoformat(received_at)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return now - stamp > timedelta(minutes=STALE_MINUTES)
 
+def _forced_offline(conn, node_id):
+    row = conn.execute("SELECT online FROM node_status WHERE node_id = ?", (node_id,)).fetchone()
+    return row is not None and not bool(row["online"])
 
-def evaluate_field(conn, field_row) -> dict:
-    field_id = field_row["id"]
-    latest = conn.execute(
-        """SELECT * FROM readings
-           WHERE field_id = ? AND valid = 1
-           ORDER BY recorded_at DESC, id DESC LIMIT 1""",
-        (field_id,),
-    ).fetchone()
-
-    decision = {
-        "field_id": field_id,
-        "field_name": field_row["name"],
-        "action": "skip",
-        "reason": None,
-        "duration_min": None,
-        "moisture": None,
-    }
-
+def evaluate_field(conn, field_row):
+    if _forced_offline(conn, field_row["node_id"]):
+        return {"field_id": field_row["id"], "field_name": field_row["name"], "action": "skip", "reason": "node_offline", "duration_min": None, "moisture": None}
+    latest = _latest_packet(conn, field_row["id"])
+    decision = {"field_id": field_row["id"], "field_name": field_row["name"], "action": "skip", "reason": None, "duration_min": None, "moisture": None}
     if latest is None:
         decision["reason"] = "no_readings_yet"
         return decision
-
-    recorded_at = datetime.fromisoformat(latest["recorded_at"])
-    if recorded_at.tzinfo is None:
-        recorded_at = recorded_at.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - recorded_at
-    decision["moisture"] = latest["soil_moisture"]
-
-    if age > timedelta(minutes=STALE_MINUTES):
+    if _is_stale(latest["received_at"], datetime.now(timezone.utc)):
         decision["reason"] = "node_offline"
         return decision
-
+    if not latest["valid"]:
+        decision["reason"] = "sensor_fault"
+        return decision
     moisture = latest["soil_moisture"]
+    decision["moisture"] = moisture
     if moisture >= WET_THRESHOLD:
         decision["reason"] = "soil_already_wet"
-        return decision
-
-    if moisture <= DRY_THRESHOLD:
+    elif moisture <= DRY_THRESHOLD:
         decision["action"] = "irrigate"
         decision["reason"] = "soil_below_dry_threshold"
-        decision["duration_min"] = _duration_for(moisture)
-        return decision
-
-    decision["reason"] = "moisture_within_range"
+        decision["duration_min"] = max(MIN_DURATION_MIN, min(MAX_DURATION_MIN, round(TARGET_MOISTURE - moisture)))
+    else:
+        decision["reason"] = "moisture_within_range"
     return decision
 
+def _sync_alert(conn, field_id, kind, active, message, now_text):
+    row = conn.execute("SELECT id FROM alerts WHERE field_id = ? AND kind = ? AND resolved = 0", (field_id, kind)).fetchone()
+    if active and row:
+        conn.execute("UPDATE alerts SET message = ? WHERE id = ?", (message, row["id"]))
+    elif active:
+        conn.execute("INSERT INTO alerts (field_id, kind, message, created_at) VALUES (?, ?, ?, ?)", (field_id, kind, message, now_text))
+    elif row:
+        conn.execute("UPDATE alerts SET resolved = 1 WHERE id = ?", (row["id"],))
 
-def run_schedule() -> list[dict]:
-    """Evaluate every field, log irrigate decisions as irrigation_events,
-    raise a node_offline alert where relevant, and return every decision."""
-    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    decisions = []
-
+def sync_node_alerts(farm_id=None):
+    now = datetime.now(timezone.utc)
+    now_text = now.isoformat(timespec="milliseconds")
     with get_conn() as conn:
-        fields = conn.execute("SELECT * FROM fields ORDER BY id").fetchall()
-        for field_row in fields:
-            decision = evaluate_field(conn, field_row)
+        sql, params = "SELECT * FROM fields", []
+        if farm_id is not None:
+            sql += " WHERE farm_id = ?"
+            params.append(farm_id)
+        for field in conn.execute(sql + " ORDER BY id", params).fetchall():
+            latest = _latest_packet(conn, field["id"])
+            forced_offline = _forced_offline(conn, field["node_id"])
+            if latest is None and not forced_offline:
+                continue
+            stale = forced_offline or (latest is not None and _is_stale(latest["received_at"], now))
+            _sync_alert(conn, field["id"], "node_offline", stale, f"{field['name']}: no sensor packet received in over {STALE_MINUTES:g} minutes", now_text)
+            dry = not stale and latest is not None and bool(latest["valid"]) and latest["soil_moisture"] <= DRY_THRESHOLD
+            dry_message = f"{field['name']}: soil moisture is low ({latest['soil_moisture']}%). Irrigation is recommended." if latest is not None else f"{field['name']}: soil moisture is low. Irrigation is recommended."
+            _sync_alert(conn, field["id"], "dry_soil", dry, dry_message, now_text)
+
+def run_schedule(farm_id=None):
+    sync_node_alerts(farm_id)
+    now_text = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    decisions = []
+    with get_conn() as conn:
+        sql, params = "SELECT * FROM fields", []
+        if farm_id is not None:
+            sql += " WHERE farm_id = ?"
+            params.append(farm_id)
+        for field in conn.execute(sql + " ORDER BY id", params).fetchall():
+            decision = evaluate_field(conn, field)
             decisions.append(decision)
-
-            if decision["action"] == "irrigate":
-                conn.execute(
-                    """INSERT INTO irrigation_events
-                       (field_id, action, source, duration_min, created_at)
-                       VALUES (?, 'open', 'rule', ?, ?)""",
-                    (decision["field_id"], decision["duration_min"], now),
-                )
-            elif decision["reason"] == "node_offline":
-                existing = conn.execute(
-                    "SELECT id FROM alerts WHERE field_id = ? AND kind = 'node_offline' AND resolved = 0",
-                    (decision["field_id"],),
-                ).fetchone()
-                if existing is None:
-                    conn.execute(
-                        "INSERT INTO alerts (field_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
-                        (
-                            decision["field_id"],
-                            "node_offline",
-                            f"{decision['field_name']}: no reading in over {STALE_MINUTES} minutes",
-                            now,
-                        ),
-                    )
-
+            last = conn.execute("SELECT action FROM irrigation_events WHERE field_id = ? ORDER BY id DESC LIMIT 1", (field["id"],)).fetchone()
+            if decision["action"] == "irrigate" and (last is None or last["action"] != "open"):
+                conn.execute("""INSERT INTO irrigation_events (field_id, action, source, duration_min, created_at) VALUES (?, 'open', 'rule', ?, ?)""", (field["id"], decision["duration_min"], now_text))
+            elif decision["action"] != "irrigate" and last is not None and last["action"] == "open":
+                conn.execute("""INSERT INTO irrigation_events (field_id, action, source, duration_min, created_at) VALUES (?, 'close', 'rule', NULL, ?)""", (field["id"], now_text))
     return decisions

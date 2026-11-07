@@ -1,17 +1,7 @@
+import time
 from datetime import datetime, timedelta, timezone
 
-import pytest
-from fastapi.testclient import TestClient
-
 from app import db
-from app.main import app
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
-    with TestClient(app) as c:
-        yield c
 
 
 def post_reading(client, node_id, moisture, minutes_ago=0):
@@ -69,8 +59,19 @@ def test_field_with_no_readings_is_skipped_not_irrigated(client):
     assert d1["reason"] == "no_readings_yet"
 
 
+def age_received_packet(node_id, minutes):
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE readings SET received_at = ?
+               WHERE field_id = (SELECT id FROM fields WHERE node_id = ?)""",
+            (old_time.isoformat(), node_id),
+        )
+
+
 def test_stale_reading_raises_offline_alert_not_irrigation(client):
-    post_reading(client, "node-04", moisture=10, minutes_ago=30)
+    post_reading(client, "node-04", moisture=10)
+    age_received_packet("node-04", 30)
     decisions = client.post("/schedule/run").json()
 
     d4 = next(d for d in decisions if d["field_id"] == 4)
@@ -83,7 +84,8 @@ def test_stale_reading_raises_offline_alert_not_irrigation(client):
 
 
 def test_offline_alert_is_not_duplicated_on_repeated_runs(client):
-    post_reading(client, "node-04", moisture=10, minutes_ago=30)
+    post_reading(client, "node-04", moisture=10)
+    age_received_packet("node-04", 30)
     client.post("/schedule/run")
     client.post("/schedule/run")
 
@@ -98,6 +100,88 @@ def test_dry_field_with_invalid_latest_reading_is_not_irrigated(client):
 
     decisions = client.post("/schedule/run").json()
     d1 = next(d for d in decisions if d["field_id"] == 1)
-    # Falls back to the last valid reading, still irrigates on that
-    assert d1["action"] == "irrigate"
-    assert d1["moisture"] == 15
+    # A fresh invalid packet must prevent decisions based on older values.
+    assert d1["action"] == "skip"
+    assert d1["reason"] == "sensor_fault"
+
+
+
+def test_offline_alert_resolves_when_packet_returns(client):
+    post_reading(client, "node-04", moisture=40)
+    age_received_packet("node-04", 30)
+    client.post("/alerts/sync")
+    assert any(a["kind"] == "node_offline" for a in client.get("/alerts").json())
+
+    post_reading(client, "node-04", moisture=40)
+    client.post("/alerts/sync")
+    assert not any(a["kind"] == "node_offline" for a in client.get("/alerts").json())
+    assert any(a["kind"] == "node_offline" for a in client.get("/alerts", params={"resolved": True}).json())
+
+
+def test_dry_soil_alert_resolves_when_moisture_recovers(client):
+    post_reading(client, "node-01", moisture=15)
+    client.post("/alerts/sync")
+    assert any(a["kind"] == "dry_soil" for a in client.get("/alerts").json())
+    post_reading(client, "node-01", moisture=40)
+    client.post("/alerts/sync")
+    assert not any(a["kind"] == "dry_soil" for a in client.get("/alerts").json())
+
+
+def test_short_configured_timeout_marks_node_offline(client, monkeypatch):
+    from app import scheduler
+
+    monkeypatch.setattr(scheduler, "STALE_MINUTES", 0.01)
+    post_reading(client, "node-03", moisture=40)
+    age_received_packet("node-03", 1)
+
+    client.post("/alerts/sync")
+    alerts = client.get("/alerts").json()
+    assert any(a["kind"] == "node_offline" and a["field_id"] == 3 for a in alerts)
+
+    # A new packet from this node restores it and resolves the active alert.
+    post_reading(client, "node-03", moisture=40)
+    client.post("/alerts/sync")
+    active = client.get("/alerts").json()
+    assert not any(a["kind"] == "node_offline" and a["field_id"] == 3 for a in active)
+
+
+def test_background_loop_opens_irrigation_without_a_manual_check(make_client):
+    with make_client("0.05") as c:
+        assert post_reading(c, "node-01", 18).status_code == 201
+        events = []
+        for _ in range(60):
+            events = c.get("/schedule/events").json()
+            if events:
+                break
+            time.sleep(0.05)
+        assert events and events[0]["action"] == "open" and events[0]["source"] == "rule"
+
+
+def test_background_loop_can_be_disabled(make_client):
+    with make_client("0") as c:
+        assert post_reading(c, "node-01", 18).status_code == 201
+        time.sleep(0.4)
+        assert c.get("/schedule/events").json() == []
+
+
+
+def test_terminal_forced_offline_is_immediate_and_recovers(client):
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO node_status (node_id, online, updated_at) VALUES ('node-02', 0, ?) "
+            "ON CONFLICT(node_id) DO UPDATE SET online = 0",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+    client.post("/alerts/sync")
+    alerts = client.get("/alerts").json()
+    assert any(a["kind"] == "node_offline" and a["field_id"] == 2 for a in alerts)
+    decisions = client.post("/schedule/run").json()
+    node_two = next(item for item in decisions if item["field_id"] == 2)
+    assert node_two["action"] == "skip"
+    assert node_two["reason"] == "node_offline"
+
+    with db.get_conn() as conn:
+        conn.execute("UPDATE node_status SET online = 1 WHERE node_id = 'node-02'")
+    post_reading(client, "node-02", moisture=40)
+    client.post("/alerts/sync")
+    assert not any(a["kind"] == "node_offline" and a["field_id"] == 2 for a in client.get("/alerts").json())

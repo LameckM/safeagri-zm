@@ -1,0 +1,39 @@
+"""Set a demo node online or offline from the terminal.
+
+Run from the repository root:
+  python -m backend.node_control node-01 offline
+  python -m backend.node_control node-01 online
+"""
+import argparse
+from datetime import datetime, timezone
+from backend.app import db
+from backend.app.db import init_db, get_conn
+from backend.app.scheduler import sync_node_alerts
+
+NODES = ("node-01", "node-02", "node-03", "node-04")
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("node", choices=NODES)
+    parser.add_argument("state", choices=("online", "offline"))
+    args = parser.parse_args()
+    import os
+    from pathlib import Path
+    if not os.getenv("DB_PATH"):
+        db.DB_PATH = Path(__file__).resolve().parent / "data" / "irrigation.db"
+    init_db()
+    online = int(args.state == "online")
+    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    with get_conn() as conn:
+        conn.execute("INSERT INTO node_status (node_id, online, updated_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(node_id) DO UPDATE SET online = excluded.online, updated_at = excluded.updated_at",
+                     (args.node, online, now))
+    sync_node_alerts()
+    print(f"{args.node} set to {args.state}.")
+    if online:
+        print("The automatic simulator will resume readings on its next cycle; offline alerts are cleared now.")
+    else:
+        print("An offline alert has been synchronized immediately.")
+
+if __name__ == "__main__":
+    main()

@@ -1,177 +1,228 @@
-"""
-Simulated farm for SafeAgri ZM.
+"""SafeAgri sensor simulator.
 
-Posts readings to the backend for all 4 fields, on a loop, so the API,
-scheduler, dashboard and ML pipeline all have data to work against before
-the ESP32 hardware exists.
+Examples:
+  python simulate.py --fast
+  python simulate.py --sensor humidity --scenario high --node node-01 --fast --hours 0.1
+  python simulate.py --sensor humidity --scenario flatline --node node-01 --fast --hours 1
+  python simulate.py --scenario offline --node node-01 --fast --hours 0.1
 
-Each field dries down over the day, jumps back up on a simulated rain
-event, and drifts a little differently per field so the 4 aren't
-identical. Faults (flatline, spike, node offline) are injected on a
-schedule and logged to faults.log, because the anomaly detector will
-need labeled ground truth to be tested against honestly.
+When --node is supplied, that node receives the selected test scenario while
+all other nodes continue sending normal readings.
 
-Usage:
-    python simulate.py                 # real-time, one post every 5 min
-    python simulate.py --fast          # 1 simulated reading per second
-    python simulate.py --hours 48      # run for 48 simulated hours then stop
+Every node must present its own key. Create them once with provision_keys.py,
+which saves node_keys.json next to this file.
 """
 import argparse
 import json
 import logging
 import math
+import os
 import random
 import time
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 
+LOG_PATH = Path(__file__).parent / "faults.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        logging.FileHandler(Path(__file__).parent / "faults.log"),
-        logging.StreamHandler(),
-    ],
+    handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler()],
 )
 log = logging.getLogger("simulator")
 
-API_URL = "http://localhost:8000/readings"
+API_BASE = os.getenv("SAFEAGRI_API_URL", "http://localhost:8000").rstrip("/")
+READINGS_URL = f"{API_BASE}/readings"
+KEYS_PATH = Path(os.getenv("SAFEAGRI_NODE_KEYS_FILE", Path(__file__).parent / "node_keys.json"))
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
-READING_INTERVAL_MIN = 5  # matches the proposal's 5-minute target
+INTERVAL_MIN = 5
 
 
 @dataclass
 class FieldState:
     node_id: str
-    moisture: float                 # percent, 0-100
-    dry_rate: float                 # percent lost per hour, field-specific
-    temp_base: float                # field-specific baseline temperature
+    moisture: float
+    dry_rate: float
+    temp_base: float
     humidity_base: float
     rain_chance_per_hour: float = 0.03
-    offline: bool = False
-    offline_until: datetime | None = None
-    fault_log: list = dc_field(default_factory=list)
 
 
-def make_fields() -> list[FieldState]:
-    # Slightly different per field, same as a real farm would be
+def make_fields():
     return [
-        FieldState("node-01", moisture=45, dry_rate=1.8, temp_base=27, humidity_base=58),
-        FieldState("node-02", moisture=30, dry_rate=2.4, temp_base=29, humidity_base=52),
-        FieldState("node-03", moisture=50, dry_rate=1.5, temp_base=26, humidity_base=61),
-        FieldState("node-04", moisture=22, dry_rate=2.1, temp_base=28, humidity_base=55),
+        FieldState("node-01", 45, 1.8, 27, 58),
+        FieldState("node-02", 30, 2.4, 29, 52),
+        FieldState("node-03", 50, 1.5, 26, 61),
+        FieldState("node-04", 22, 2.1, 28, 55),
     ]
 
 
-def diurnal_temp(base: float, sim_time: datetime) -> float:
-    """Warmer in the afternoon, cooler before dawn."""
-    hour = sim_time.hour + sim_time.minute / 60
-    swing = 6 * math.sin((hour - 9) / 24 * 2 * math.pi)
-    return round(base + swing + random.uniform(-0.4, 0.4), 1)
+def diurnal_temp(base, moment):
+    hour = moment.hour + moment.minute / 60
+    return round(base + 6 * math.sin((hour - 9) / 24 * 2 * math.pi) + random.uniform(-0.4, 0.4), 1)
 
 
-def diurnal_humidity(base: float, sim_time: datetime) -> float:
-    hour = sim_time.hour + sim_time.minute / 60
-    swing = -8 * math.sin((hour - 9) / 24 * 2 * math.pi)  # inverse of temp
-    return round(max(10, min(100, base + swing + random.uniform(-1.5, 1.5))), 1)
+def diurnal_humidity(base, moment):
+    hour = moment.hour + moment.minute / 60
+    value = base - 8 * math.sin((hour - 9) / 24 * 2 * math.pi) + random.uniform(-1.5, 1.5)
+    return round(max(10, min(100, value)), 1)
 
 
-def step_moisture(f: FieldState, minutes: int) -> float:
+def step_moisture(field, minutes):
     hours = minutes / 60
-    loss = f.dry_rate * hours * random.uniform(0.85, 1.15)
-    new_moisture = f.moisture - loss
-
-    # Chance of rain each simulated hour, applied pro-rated per step
-    if random.random() < f.rain_chance_per_hour * hours:
-        rain_gain = random.uniform(15, 35)
-        new_moisture += rain_gain
-        log.info(f"RAIN on {f.node_id}: +{rain_gain:.1f}% moisture")
-
-    f.moisture = max(2.0, min(100.0, new_moisture))
-    return f.moisture
+    value = field.moisture - field.dry_rate * hours * random.uniform(0.85, 1.15)
+    if random.random() < field.rain_chance_per_hour * hours:
+        gain = random.uniform(15, 35)
+        value += gain
+        log.info("RAIN on %s: +%.1f%%", field.node_id, gain)
+    field.moisture = max(2, min(100, value))
+    return field.moisture
 
 
-def maybe_inject_fault(f: FieldState, sim_time: datetime) -> str | None:
-    """Small per-step chance of each fault type. Logged so it can be used
-    as ground truth when testing the anomaly detector."""
-    if f.offline:
-        if sim_time >= f.offline_until:
-            f.offline = False
-            log.info(f"FAULT END offline on {f.node_id}")
-        return "offline"
-
-    roll = random.random()
-    if roll < 0.0006:
-        f.offline = True
-        f.offline_until = sim_time + timedelta(minutes=random.choice([15, 30, 60]))
-        log.info(f"FAULT START offline on {f.node_id} until {f.offline_until.isoformat()}")
-        return "offline"
-    if roll < 0.0010:
-        log.info(f"FAULT spike on {f.node_id}")
-        return "spike"
-    if roll < 0.0014:
-        log.info(f"FAULT flatline on {f.node_id}")
-        return "flatline"
-    return None
-
-
-def build_reading(f: FieldState, sim_time: datetime, minutes_elapsed: int) -> dict | None:
-    fault = maybe_inject_fault(f, sim_time)
-    moisture = step_moisture(f, minutes_elapsed)
-    temperature = diurnal_temp(f.temp_base, sim_time)
-    humidity = diurnal_humidity(f.humidity_base, sim_time)
-
-    if fault == "offline":
-        return None  # node sends nothing at all
-    if fault == "spike":
-        moisture = random.choice([999, -50, 250])
-    elif fault == "flatline":
-        moisture = f.moisture  # looks normal but repeats exactly next step too
-        f._flatlined_at = moisture  # noqa: SLF001 (simple sim state, fine here)
-
+def normal_reading(field, moment):
     return {
-        "node_id": f.node_id,
-        "soil_moisture": round(moisture, 1),
-        "temperature": temperature,
-        "humidity": humidity,
-        "timestamp": sim_time.isoformat(),
+        "node_id": field.node_id,
+        "soil_moisture": round(max(0, min(100, field.moisture + random.gauss(0, 0.15))), 1),
+        "temperature": diurnal_temp(field.temp_base, moment),
+        "humidity": diurnal_humidity(field.humidity_base, moment),
+        "timestamp": moment.isoformat(),
     }
 
 
-def post_reading(client: httpx.Client, reading: dict) -> None:
+def normalize_sensor(sensor):
+    return "soil_moisture" if sensor == "water" else sensor
+
+
+def apply_scenario(reading, sensor, scenario, held_values):
+    """Change only the requested metric; leave the other metrics untouched."""
+    if scenario == "normal":
+        return reading
+    if scenario == "offline":
+        return None
+
+    limits = {
+        "humidity": (0.0, 100.0, 8.0, 108.0),
+        "temperature": (-5.0, 60.0, -10.0, 70.0),
+        "soil_moisture": (0.0, 100.0, 5.0, 110.0),
+    }
+    if sensor not in limits:
+        raise ValueError(f"Unsupported sensor: {sensor}")
+
+    _, _, low_value, high_value = limits[sensor]
+    if scenario == "low":
+        reading[sensor] = low_value
+    elif scenario in ("high", "spike"):
+        reading[sensor] = high_value
+    elif scenario == "flatline":
+        key = (reading["node_id"], sensor)
+        if key not in held_values:
+            held_values[key] = reading[sensor]
+        reading[sensor] = held_values[key]
+
+    log.info(
+        "TARGETED TEST node=%s sensor=%s scenario=%s value=%s",
+        reading["node_id"], sensor, scenario, reading[sensor],
+    )
+    return reading
+
+
+def load_node_keys(path=KEYS_PATH):
     try:
-        r = client.post(API_URL, json=reading, timeout=5)
-        if r.status_code != 201:
-            log.warning(f"API rejected reading: {r.status_code} {r.text}")
-    except httpx.HTTPError as e:
-        log.error(f"Could not reach API at {API_URL}: {e}")
+        return json.loads(Path(path).read_text())
+    except FileNotFoundError:
+        return {}
 
 
-def run(fast: bool, hours: float | None, start: datetime | None = None) -> None:
+def post_reading(client, reading, node_key=None):
+    headers = {"X-Node-Key": node_key} if node_key else {}
+    try:
+        response = client.post(READINGS_URL, json=reading, headers=headers, timeout=5)
+        if response.status_code != 201:
+            log.warning("API rejected reading: %s %s", response.status_code, response.text)
+        else:
+            result = response.json()
+            log.info(
+                "POSTED %s moisture=%s temp=%s humidity=%s valid=%s",
+                reading["node_id"], reading["soil_moisture"], reading["temperature"],
+                reading["humidity"], result.get("valid"),
+            )
+    except httpx.HTTPError as exc:
+        log.error("API connection failed: %s", exc)
+
+
+def run(fast=False, hours=None, sensor=None, scenario="normal", node=None, node_keys=None):
+    # Always keep all nodes running. --node selects only which node receives
+    # the injected fault; it must not silence the other fields.
     fields = make_fields()
-    sim_time = start or datetime.now(timezone.utc)
-    end_time = sim_time + timedelta(hours=hours) if hours else None
-    sleep_seconds = 0.05 if fast else READING_INTERVAL_MIN * 60
+    if node_keys is None:
+        node_keys = load_node_keys()
+    if not node_keys:
+        log.error("No node keys found at %s. Run provision_keys.py first.", KEYS_PATH)
+        return
+    for field in fields:
+        if field.node_id not in node_keys:
+            log.warning("No key for %s: its readings will be rejected", field.node_id)
+    sensor = normalize_sensor(sensor)
+    moment = datetime.now(timezone.utc)
+    end = moment + timedelta(hours=hours) if hours is not None else None
+    held_values = {}
+    delay = 0.05 if fast else INTERVAL_MIN * 60
+    offline_armed = set()
 
-    log.info(f"Starting simulation: fast={fast} hours={hours}")
+    log.info(
+        "Starting simulation scenario=%s sensor=%s target=%s fast=%s interval=%ss",
+        scenario, sensor or "all", node or "all nodes", fast, delay,
+    )
+
     with httpx.Client() as client:
-        while end_time is None or sim_time < end_time:
-            for f in fields:
-                reading = build_reading(f, sim_time, READING_INTERVAL_MIN)
+        while end is None or moment < end:
+            for field in fields:
+                step_moisture(field, INTERVAL_MIN)
+                reading = normal_reading(field, moment)
+                is_target = node is None or field.node_id == node
+
+                if is_target and scenario == "offline":
+                    # Send one fresh baseline packet first. Subsequent cycles
+                    # deliberately omit this node so the backend can age it out.
+                    if field.node_id not in offline_armed:
+                        post_reading(client, reading, node_keys.get(field.node_id))
+                        offline_armed.add(field.node_id)
+                        log.warning(
+                            "OFFLINE TEST ARMED for %s: no more packets will be sent",
+                            field.node_id,
+                        )
+                    else:
+                        log.warning("SIMULATED NODE OFFLINE: %s (no packet sent)", field.node_id)
+                    continue
+
+                if is_target and sensor and scenario != "normal":
+                    reading = apply_scenario(reading, sensor, scenario, held_values)
+
                 if reading is not None:
-                    post_reading(client, reading)
-            sim_time += timedelta(minutes=READING_INTERVAL_MIN)
-            time.sleep(sleep_seconds)
+                    post_reading(client, reading, node_keys.get(field.node_id))
+
+            moment += timedelta(minutes=INTERVAL_MIN)
+            time.sleep(delay)
 
     log.info("Simulation finished")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fast", action="store_true", help="advance quickly instead of real-time")
-    parser.add_argument("--hours", type=float, default=None, help="stop after N simulated hours")
+    parser.add_argument("--fast", action="store_true", help="Advance each five-minute step every 0.05 seconds")
+    parser.add_argument("--hours", type=float, help="Stop after this many simulated hours")
+    parser.add_argument("--sensor", choices=["humidity", "temperature", "soil_moisture", "water"])
+    parser.add_argument("--scenario", choices=["normal", "low", "high", "spike", "flatline", "offline"], default="normal")
+    parser.add_argument("--node", choices=NODE_IDS, help="Target one node; all other nodes continue normally")
     args = parser.parse_args()
-    run(fast=args.fast, hours=args.hours)
+
+    if args.hours is not None and args.hours <= 0:
+        parser.error("--hours must be greater than zero")
+    if args.scenario not in ("normal", "offline") and not args.sensor:
+        parser.error("--sensor is required for a sensor fault scenario")
+    if args.scenario == "offline" and args.sensor:
+        parser.error("--sensor is not used with the offline scenario")
+
+    run(args.fast, args.hours, args.sensor, args.scenario, args.node)

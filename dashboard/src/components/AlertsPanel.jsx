@@ -7,6 +7,7 @@ function timeLabel(isoString) {
 const KIND_LABEL = {
   sensor_fault: "Sensor fault",
   node_offline: "Node offline",
+  dry_soil: "Dry soil",
 };
 
 export default function AlertsPanel({ alerts }) {
@@ -14,7 +15,7 @@ export default function AlertsPanel({ alerts }) {
     <section className="panel">
       <h2>Alerts</h2>
       {alerts.length === 0 ? (
-        <p className="panel__empty">No active alerts. Every sensor is reporting normal values.</p>
+        <p className="panel__empty">No active alerts.</p>
       ) : (
         <ul className="panel__list">
           {alerts.map((alert) => (
