@@ -11,8 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth
 from .db import get_conn, init_db
+from .demo_simulator import demo_simulation_loop, set_demo_fault, clear_demo_fault
 from .scheduler import run_schedule, sync_node_alerts
-from .schemas import FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
+from .schemas import DemoFaultIn, DemoFaultClearIn, FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
 from .validation import check_metric_flatline, check_reading_flags, check_trend_flags, describe_flag
 
 log = logging.getLogger("safeagri")
@@ -28,18 +29,53 @@ async def schedule_loop(interval: float):
             log.exception("Scheduled irrigation check failed")
 
 
+def ensure_owner_account():
+    """Create or refresh the single defence-demo owner from backend environment settings."""
+    email = os.getenv("SAFEAGRI_OWNER_EMAIL", "owner@safeagri.local").strip().lower()
+    password = os.getenv("SAFEAGRI_OWNER_PASSWORD", "SafeAgriDemo2026!")
+    full_name = os.getenv("SAFEAGRI_OWNER_NAME", "SafeAgri Owner").strip()
+    farm_name = os.getenv("SAFEAGRI_FARM_NAME", "Kafubu Demonstration Farm").strip()
+    location = os.getenv("SAFEAGRI_FARM_LOCATION", "Kafubu Block, Luanshya").strip()
+    if len(password) < 10:
+        raise RuntimeError("SAFEAGRI_OWNER_PASSWORD must contain at least 10 characters")
+    now = utc_iso()
+    with get_conn() as conn:
+        match = conn.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+        owner = conn.execute("SELECT * FROM users WHERE role = 'owner' ORDER BY id LIMIT 1").fetchone()
+        existing = match or owner or conn.execute("SELECT * FROM users ORDER BY id LIMIT 1").fetchone()
+        if existing:
+            farm_id = existing["farm_id"]
+            conn.execute("UPDATE farms SET name = ?, location = ? WHERE id = ?", (farm_name, location, farm_id))
+            if match and match["id"] != existing["id"]:
+                conn.execute("UPDATE users SET role = 'farmer' WHERE id = ?", (match["id"],))
+            conn.execute("UPDATE users SET full_name = ?, email = ?, password_hash = ?, role = 'owner' WHERE id = ?",
+                         (full_name, email, auth.hash_password(password), existing["id"]))
+            owner_id = existing["id"]
+        else:
+            farm_cur = conn.execute("INSERT INTO farms (name, location, created_at) VALUES (?, ?, ?)", (farm_name, location, now))
+            farm_id = farm_cur.lastrowid
+            cur = conn.execute("INSERT INTO users (farm_id, full_name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, 'owner', ?)",
+                               (farm_id, full_name, email, auth.hash_password(password), now))
+            owner_id = cur.lastrowid
+        conn.execute("UPDATE users SET role = 'farmer' WHERE id != ?", (owner_id,))
+        conn.execute("UPDATE fields SET farm_id = ? WHERE farm_id IS NULL OR farm_id != ?", (farm_id, farm_id))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    interval = float(os.getenv("SAFEAGRI_SCHEDULE_SECONDS", "60"))
-    task = asyncio.create_task(schedule_loop(interval)) if interval > 0 else None
+    ensure_owner_account()
+    schedule_interval = float(os.getenv("SAFEAGRI_SCHEDULE_SECONDS", "60"))
+    demo_task = asyncio.create_task(demo_simulation_loop()) if os.getenv("SAFEAGRI_DEMO_SIMULATION", "1").lower() not in ("0", "false", "no") else None
+    schedule_task = asyncio.create_task(schedule_loop(schedule_interval)) if schedule_interval > 0 else None
     try:
         yield
     finally:
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        for task in (demo_task, schedule_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
 
 app = FastAPI(title="SafeAgri Smart Irrigation API", lifespan=lifespan)
@@ -79,7 +115,7 @@ def current_user(authorization: str | None = Header(default=None)):
         user = conn.execute(
             """SELECT u.id, u.full_name, u.email, u.farm_id, u.role,
                       f.name AS farm_name, f.location AS farm_location
-               FROM users u JOIN farms f ON f.id = u.farm_id WHERE u.id = ?""",
+               FROM users u JOIN farms f ON f.id = u.farm_id WHERE u.id = ? AND u.role = 'owner'""",
             (user_id,),
         ).fetchone()
     if user is None or user["farm_id"] != payload.get("farm_id"):
@@ -101,38 +137,9 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/auth/register", status_code=201)
-def register(payload: RegisterIn):
-    now = utc_iso()
-    with get_conn() as conn:
-        existing_users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
-        if existing_users == 0:
-            expected = os.getenv("SAFEAGRI_INITIAL_SETUP_KEY")
-            if not expected:
-                raise HTTPException(status_code=503, detail="Initial setup is disabled. Configure SAFEAGRI_INITIAL_SETUP_KEY first.")
-            if not payload.setup_key or not secrets.compare_digest(payload.setup_key, expected):
-                raise HTTPException(status_code=403, detail="A valid initial setup key is required")
-        if conn.execute("SELECT id FROM users WHERE email = ?", (payload.email,)).fetchone():
-            raise HTTPException(status_code=409, detail="An account with this email already exists")
-        farm_cur = conn.execute(
-            "INSERT INTO farms (name, location, created_at) VALUES (?, ?, ?)",
-            (payload.farm_name, payload.location, now),
-        )
-        farm_id = farm_cur.lastrowid
-        if existing_users == 0:
-            # The setup key authorizes the first account to adopt legacy demo data.
-            conn.execute("UPDATE fields SET farm_id = ? WHERE farm_id IS NULL", (farm_id,))
-        user_cur = conn.execute(
-            """INSERT INTO users (farm_id, full_name, email, password_hash, role, created_at)
-               VALUES (?, ?, ?, ?, 'farmer', ?)""",
-            (farm_id, payload.full_name, payload.email, auth.hash_password(payload.password), now),
-        )
-    user = {
-        "id": user_cur.lastrowid, "full_name": payload.full_name, "email": payload.email,
-        "farm_id": farm_id, "farm_name": payload.farm_name,
-        "farm_location": payload.location, "role": "farmer",
-    }
-    return {"access_token": auth.create_access_token(user["id"], farm_id), "token_type": "bearer", "user": user}
+@app.post("/auth/register", status_code=403)
+def register_disabled():
+    raise HTTPException(status_code=403, detail="Public registration is disabled. SafeAgri is configured for its project owner only.")
 
 
 @app.post("/auth/login")
@@ -141,8 +148,9 @@ def login(payload: LoginIn):
         user = conn.execute(
             """SELECT u.id, u.full_name, u.email, u.password_hash, u.farm_id, u.role,
                       f.name AS farm_name, f.location AS farm_location
-               FROM users u JOIN farms f ON f.id = u.farm_id WHERE u.email = ?""",
-            (payload.email,),
+               FROM users u JOIN farms f ON f.id = u.farm_id
+               WHERE u.email = ? COLLATE NOCASE AND u.role = 'owner'""",
+            (payload.email.strip(),),
         ).fetchone()
     if user is None or not auth.verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
@@ -321,3 +329,18 @@ def schedule_events(limit: int = Query(50, ge=1, le=500), user: dict = Depends(c
             (user["farm_id"], limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+
+@app.post("/demo/fault")
+def start_demo_fault(payload: DemoFaultIn, user: dict = Depends(current_user)):
+    with get_conn() as conn:
+        field = require_owned_field(conn, payload.field_id, user["farm_id"])
+    return set_demo_fault(field["node_id"], payload.metric, payload.scenario)
+
+
+@app.post("/demo/fault/clear")
+def stop_demo_fault(payload: DemoFaultClearIn, user: dict = Depends(current_user)):
+    with get_conn() as conn:
+        field = require_owned_field(conn, payload.field_id, user["farm_id"])
+    return clear_demo_fault(field["node_id"])
