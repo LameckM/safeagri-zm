@@ -128,14 +128,16 @@ def test_second_farmer_cannot_see_first_farm_fields_or_data(client):
     assert client.get("/schedule/events").json() == []
 
 
-def test_field_creation_and_update_are_farm_scoped(client):
-    created = client.post("/fields", json={"name": "North Plot", "node_id": "node-new"})
-    assert created.status_code == 201
-    field_id = created.json()["id"]
-    assert created.json()["farm_id"] == 1
-    updated = client.patch(f"/fields/{field_id}", json={"name": "North Maize"})
+def test_field_creation_is_disabled(client):
+    response = client.post("/fields", json={"name": "North Plot", "node_id": "node-new"})
+    assert response.status_code == 405
+
+
+def test_field_rename_is_farm_scoped(client):
+    field_id = client.get("/fields").json()[0]["id"]
+    updated = client.patch(f"/fields/{field_id}", json={"name": "Renamed Field"})
     assert updated.status_code == 200
-    assert updated.json()["name"] == "North Maize"
+    assert updated.json()["name"] == "Renamed Field"
     second = client.post("/auth/register", json={
         "full_name": "Second Farmer", "email": "second@example.com",
         "password": "another-password-123", "farm_name": "Second Farm",
