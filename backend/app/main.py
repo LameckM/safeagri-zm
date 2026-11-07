@@ -21,11 +21,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SafeAgri Smart Irrigation API", lifespan=lifespan)
 LOCAL_DASHBOARD_ORIGIN = (
-    r"^https?://(localhost|127\\.0\\.1|"
-    r"10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|"
-    r"192\\.168\\.\\d{1,3}\\.\\d{1,3}|"
-    r"172\\.(?:1[6-9]|2[0-9]|3[01])\\.\\d{1,3}\\.\\d{1,3})"
-    r"(:\\d+)?$"
+    r"^https?://(localhost|127\.0\.1|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})"
+    r"(:\d+)?$"
 )
 app.add_middleware(
     CORSMiddleware,
