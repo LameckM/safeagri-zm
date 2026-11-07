@@ -207,3 +207,25 @@ def test_temperature_flatline_is_detected(client):
         }).json())
     assert [result["valid"] for result in results] == [True, True, True, False]
     assert results[-1]["flag"] == "temperature_flatline"
+
+
+
+def test_demo_sensor_fault_controls_are_owner_protected(client):
+    from app.demo_simulator import FAULTS
+    FAULTS.clear()
+    fields = client.get("/fields").json()
+    field_id = fields[0]["id"]
+    started = client.post("/demo/fault", json={"field_id": field_id, "metric": "humidity", "scenario": "high"})
+    assert started.status_code == 200
+    assert started.json()["status"] == "fault_started"
+    assert FAULTS["node-01"]["metric"] == "humidity"
+    cleared = client.post("/demo/fault/clear", json={"field_id": field_id})
+    assert cleared.status_code == 200
+    assert cleared.json()["status"] == "fault_cleared"
+    assert "node-01" not in FAULTS
+
+
+def test_demo_fault_routes_reject_invalid_metric(client):
+    field_id = client.get("/fields").json()[0]["id"]
+    response = client.post("/demo/fault", json={"field_id": field_id, "metric": "battery", "scenario": "high"})
+    assert response.status_code == 422
