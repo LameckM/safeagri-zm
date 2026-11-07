@@ -103,8 +103,8 @@ Optional demo settings:
 | --- | --- | --- |
 | `SAFEAGRI_DEMO_SIMULATION` | `1` | Set to `0` to disable automatic demo readings. |
 | `SAFEAGRI_DEMO_INTERVAL_SECONDS` | `5` | Seconds between simulated sensor packets. |
-| `SAFEAGRI_OWNER_EMAIL` | `owner@safeagri.local` | Owner login email. |
-| `SAFEAGRI_OWNER_PASSWORD` | `SafeAgriDemo2026!` | Default password; set a private value before defence. |
+| `SAFEAGRI_OWNER_EMAIL` | `owner@example.com` | Example owner email; set it in `backend/.env`. |
+| `SAFEAGRI_OWNER_PASSWORD` | No default | Set a private password in `backend/.env`. |
 | `SAFEAGRI_OWNER_NAME` | `SafeAgri Owner` | Owner display name. |
 | `SAFEAGRI_FARM_NAME` | `Kafubu Demonstration Farm` | Dashboard farm label. |
 | `SAFEAGRI_FARM_LOCATION` | `Kafubu Block, Luanshya` | Dashboard location label. |
