@@ -4,6 +4,7 @@ import FieldCard from "./components/FieldCard.jsx";
 import StatusPill from "./components/StatusPill.jsx";
 import AlertsPanel from "./components/AlertsPanel.jsx";
 import IrrigationLog from "./components/IrrigationLog.jsx";
+import FieldManagement from "./components/FieldManagement.jsx";
 
 const POLL_MS = 10_000;
 
@@ -190,6 +191,8 @@ export default function App() {
         {fields.length === 0 && !connectionError && <p className="panel__empty">No fields have been added to this farm yet.</p>}
         {fields.map((field) => <FieldCard key={field.id} field={field} reading={readingsByField[field.id]} offline={offlineFieldIds.has(field.id)} />)}
       </section>
+
+      <FieldManagement fields={fields} onChanged={refresh} />
 
       <div className="actions">
         <button className="check-button" onClick={handleCheckNow} disabled={checking}>
