@@ -173,10 +173,9 @@ export default function App() {
         <div>
           <h1>SafeAgri</h1>
           <p className="page__subtitle">{user.farm_name}{user.farm_location ? ` · ${user.farm_location}` : ""}</p>
+          <p className="page__farmer">Farmer: {user.full_name}</p>
         </div>
         <div className="header-actions">
-          <span className="account-label">{user.full_name}</span>
-          <button className="logout-button" onClick={logout}>Sign out</button>
           <StatusPill offlineCount={offlineCount} alertCount={alerts.length} awaitingCount={awaitingCount} />
         </div>
       </header>
@@ -202,6 +201,10 @@ export default function App() {
         <AlertsPanel alerts={alerts} />
         <IrrigationLog events={events} />
       </div>
+
+      <footer className="page__footer">
+        <button className="logout-button" onClick={logout}>Sign out</button>
+      </footer>
     </div>
   );
 }
