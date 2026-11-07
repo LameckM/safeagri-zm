@@ -8,7 +8,7 @@ import os
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import auth
+from . import auth, config
 from .db import get_conn, init_db
 from .demo_simulator import demo_simulation_loop, set_demo_fault, clear_demo_fault
 from .scheduler import run_schedule, sync_node_alerts
@@ -30,13 +30,17 @@ async def schedule_loop(interval: float):
 
 def ensure_owner_account():
     """Create or refresh the single defence-demo owner from backend environment settings."""
-    email = os.getenv("SAFEAGRI_OWNER_EMAIL", "owner@safeagri.local").strip().lower()
-    password = os.getenv("SAFEAGRI_OWNER_PASSWORD", "SafeAgriDemo2026!")
-    full_name = os.getenv("SAFEAGRI_OWNER_NAME", "SafeAgri Owner").strip()
-    farm_name = os.getenv("SAFEAGRI_FARM_NAME", "Kafubu Demonstration Farm").strip()
-    location = os.getenv("SAFEAGRI_FARM_LOCATION", "Kafubu Block, Luanshya").strip()
-    if len(password) < 10:
-        raise RuntimeError("SAFEAGRI_OWNER_PASSWORD must contain at least 10 characters")
+    email = config.OWNER_EMAIL
+    password = config.OWNER_PASSWORD
+    full_name = config.OWNER_NAME
+    farm_name = config.FARM_NAME
+    location = config.FARM_LOCATION
+    if not password or len(password) < 10 or password.startswith("change-this"):
+        raise RuntimeError(
+            "Set SAFEAGRI_OWNER_PASSWORD to your own password (at least 10 characters) in backend/.env"
+        )
+    if not os.getenv("SAFEAGRI_SECRET_KEY") or os.getenv("SAFEAGRI_SECRET_KEY", "").startswith("replace-this"):
+        raise RuntimeError("Set SAFEAGRI_SECRET_KEY to a private random value in backend/.env")
     now = utc_iso()
     with get_conn() as conn:
         match = conn.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
@@ -149,7 +153,7 @@ def login(payload: LoginIn):
                       f.name AS farm_name, f.location AS farm_location
                FROM users u JOIN farms f ON f.id = u.farm_id
                WHERE u.email = ? COLLATE NOCASE AND u.role = 'owner'""",
-            (payload.email.strip(),),
+            (payload.email.strip().lower(),),
         ).fetchone()
     if user is None or not auth.verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
