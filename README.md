@@ -20,36 +20,26 @@ safeagri-zm/
 - Node.js 18 or newer and npm
 - Git
 
-## 1. Configure backend secrets (first installation)
+## 1. Configure the project owner (first installation)
 
-The API needs a persistent signing secret for login tokens and a one-time setup key for the first farmer account. Generate these once in PowerShell before starting the backend. Do not commit either value or share the signing secret.
-
-Run this block from PowerShell:
+The defence build uses one owner account. Public registration is disabled. Set the owner credentials once in PowerShell; they are read by the backend at startup and the owner account is created or refreshed in SQLite. Choose your own password and keep it private.
 
 ```powershell
+[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_EMAIL", "owner@example.com", "User")
+[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_PASSWORD", "replace-with-a-long-private-password", "User")
+[Environment]::SetEnvironmentVariable("SAFEAGRI_OWNER_NAME", "Project Owner", "User")
+[Environment]::SetEnvironmentVariable("SAFEAGRI_FARM_NAME", "Kafubu Demonstration Farm", "User")
+[Environment]::SetEnvironmentVariable("SAFEAGRI_FARM_LOCATION", "Kafubu Block, Luanshya", "User")
+
 $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 $bytes = New-Object byte[] 48
 $rng.GetBytes($bytes)
 $secret = [Convert]::ToBase64String($bytes)
-$setup = [guid]::NewGuid().ToString("N")
 $rng.Dispose()
-
 [Environment]::SetEnvironmentVariable("SAFEAGRI_SECRET_KEY", $secret, "User")
-[Environment]::SetEnvironmentVariable("SAFEAGRI_INITIAL_SETUP_KEY", $setup, "User")
-$env:SAFEAGRI_SECRET_KEY = $secret
-$env:SAFEAGRI_INITIAL_SETUP_KEY = $setup
-
-Write-Host "Initial setup key (enter this during the first farmer registration): $setup"
 ```
 
-Keep the setup key private. Complete the first farmer registration while the backend is running. After the first account has been created, remove the setup key from your Windows user environment; the API no longer needs it:
-
-```powershell
-[Environment]::SetEnvironmentVariable("SAFEAGRI_INITIAL_SETUP_KEY", $null, "User")
-Remove-Item Env:SAFEAGRI_INITIAL_SETUP_KEY -ErrorAction SilentlyContinue
-```
-
-Keep `SAFEAGRI_SECRET_KEY` unchanged across restarts. Changing it invalidates existing login tokens. New PowerShell windows load the saved user-level signing key automatically. If you generated the key in an older terminal, open a new terminal before starting the API.
+Open a new PowerShell terminal after setting these values. Do not change the signing secret after setup, because doing so invalidates active login tokens. The owner email and password can be changed in the Windows user environment settings or with the commands above; restarting the backend applies the new credentials.
 
 ## 2. Start the backend
 
@@ -100,30 +90,34 @@ If the page opens but data does not load, check that the backend is running and 
 
 The backend CORS policy permits localhost and private-network IPv4 origins for local development/demo use. This is not production authentication or internet-facing security. Do not expose the development servers directly to the public internet.
 
-## 5. Run the sensor simulator (optional)
+## 5. Automatic demonstration sensors and controls
 
-With the backend running, open another terminal:
+The backend starts the four simulated sensor nodes automatically. They produce changing soil-moisture, temperature, and humidity readings every five seconds by default. No separate simulator terminal, farmer registration, or node-key provisioning is needed for the defence demonstration.
 
-```powershell
-cd simulator
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-$env:SAFEAGRI_EMAIL = "you@example.com"
-python provision_keys.py
-python simulate.py --fast
-```
+Use the dashboard's **Sensor fault demonstration** panel to choose Field 1–4, select humidity, temperature, or soil moisture, then apply an abnormally high, abnormally low, or stuck/flatline value. The injected fault remains active until you select **Clear fault / restore normal**. Normal readings resume after clearing, and sensor-fault alerts resolve once the incoming values pass validation.
 
-The backend only accepts readings from nodes that present a key (see "Sensor node keys" below). `provision_keys.py` logs in as your farmer account, issues a key for every field, and saves them to `simulator/node_keys.json`, which is not committed. You only need to run it once, or again to rotate the keys.
-
-Use `python simulate.py` for the five-minute real-time interval, or `python simulate.py --hours 24` to stop after 24 simulated hours. The simulator sends readings to `http://localhost:8000` by default. Set `SAFEAGRI_API_URL` if the API is running elsewhere:
+Node connectivity is deliberately controlled only from a terminal. Run these commands from the repository root:
 
 ```powershell
-$env:SAFEAGRI_API_URL = "http://192.168.1.20:8000"
-python simulate.py --fast
+python -m backend.node_control node-01 offline
+python -m backend.node_control node-01 online
 ```
 
-Generated fault logs are local and are not committed.
+Replace `node-01` with `node-02`, `node-03`, or `node-04`. Offline status is stored immediately and creates a node-offline alert on the next background synchronization cycle. Setting a node online resumes simulated readings and clears the offline alert after the next cycle.
+
+Optional demo settings:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SAFEAGRI_DEMO_SIMULATION` | `1` | Set to `0` to disable automatic demo readings. |
+| `SAFEAGRI_DEMO_INTERVAL_SECONDS` | `5` | Seconds between simulated sensor packets. |
+| `SAFEAGRI_OWNER_EMAIL` | `owner@safeagri.local` | Owner login email. |
+| `SAFEAGRI_OWNER_PASSWORD` | `SafeAgriDemo2026!` | Default password; set a private value before defence. |
+| `SAFEAGRI_OWNER_NAME` | `SafeAgri Owner` | Owner display name. |
+| `SAFEAGRI_FARM_NAME` | `Kafubu Demonstration Farm` | Dashboard farm label. |
+| `SAFEAGRI_FARM_LOCATION` | `Kafubu Block, Luanshya` | Dashboard location label. |
+
+The automatic simulator is demonstration data, not live ESP32 telemetry. Real hardware integration remains a later stage.
 
 ## 6. Run backend tests
 
