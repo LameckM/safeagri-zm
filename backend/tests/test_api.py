@@ -90,22 +90,13 @@ def test_protected_endpoints_reject_missing_token(client):
         assert client.get(path).status_code == 401
 
 
-def test_second_farmer_cannot_see_first_farm_fields_or_data(client):
-    client.post("/readings", json=GOOD)
-    second = client.post("/auth/register", json={
-        "full_name": "Second Farmer",
-        "email": "second@example.com",
-        "password": "another-password-123",
-        "farm_name": "Second Farm",
-        "location": "Ndola",
+def test_public_registration_is_disabled(client):
+    response = client.post("/auth/register", json={
+        "full_name": "Another User", "email": "another@example.com",
+        "password": "another-password-123", "farm_name": "Another Farm",
     })
-    assert second.status_code == 201
-    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
-    assert client.get("/fields").json() == []
-    assert client.get("/latest").json() == []
-    assert client.get("/readings").json() == []
-    assert client.get("/alerts").json() == []
-    assert client.get("/schedule/events").json() == []
+    assert response.status_code == 403
+    assert "registration is disabled" in response.json()["detail"].lower()
 
 
 def test_field_creation_is_disabled(client):
@@ -113,17 +104,11 @@ def test_field_creation_is_disabled(client):
     assert response.status_code == 405
 
 
-def test_field_rename_is_farm_scoped(client):
+def test_owner_can_rename_demo_field(client):
     field_id = client.get("/fields").json()[0]["id"]
     updated = client.patch(f"/fields/{field_id}", json={"name": "Renamed Field"})
     assert updated.status_code == 200
     assert updated.json()["name"] == "Renamed Field"
-    second = client.post("/auth/register", json={
-        "full_name": "Second Farmer", "email": "second@example.com",
-        "password": "another-password-123", "farm_name": "Second Farm",
-    })
-    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
-    assert client.patch(f"/fields/{field_id}", json={"name": "Stolen"}).status_code == 404
 
 
 def test_login_and_current_user(client):
@@ -134,17 +119,17 @@ def test_login_and_current_user(client):
     assert client.get("/auth/me").json()["email"] == "farmer@example.com"
 
 
-def test_registration_requires_setup_key_for_first_account(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "setup.db")
+def test_owner_account_is_seeded_from_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "owner.db")
     monkeypatch.setenv("SAFEAGRI_SECRET_KEY", "test-secret-key-for-safeagri-tests-only")
-    monkeypatch.setenv("SAFEAGRI_INITIAL_SETUP_KEY", "correct-setup-key")
+    monkeypatch.setenv("SAFEAGRI_OWNER_EMAIL", "configured@example.com")
+    monkeypatch.setenv("SAFEAGRI_OWNER_PASSWORD", "configured-owner-password")
+    monkeypatch.setenv("SAFEAGRI_DEMO_SIMULATION", "0")
     with TestClient(app) as c:
-        payload = {
-            "full_name": "First Farmer", "email": "first@example.com",
-            "password": "first-password-123", "farm_name": "Legacy Farm",
-        }
-        assert c.post("/auth/register", json=payload).status_code == 403
-        assert c.post("/auth/register", json={**payload, "setup_key": "correct-setup-key"}).status_code == 201
+        response = c.post("/auth/login", json={"email": "configured@example.com", "password": "configured-owner-password"})
+        assert response.status_code == 200
+        assert response.json()["user"]["role"] == "owner"
+        assert c.post("/auth/register", json={}).status_code == 403
 
 
 # --- trend rules: flatline and implausible drop -----------------------------
