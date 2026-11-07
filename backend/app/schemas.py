@@ -13,11 +13,6 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
 
-class FieldCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
-    node_id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
-    crop: str = Field(default="maize", min_length=1, max_length=40)
-
 class FieldUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=80)
