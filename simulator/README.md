@@ -18,7 +18,7 @@ Use `--sensor` to change only one measurement. Use `--node` to target one node. 
 | Temperature spike | `python simulate.py --sensor temperature --scenario spike --node node-02 --fast --hours 0.1` |
 | Low soil moisture / dry-soil alert | `python simulate.py --sensor water --scenario low --node node-03 --fast --hours 0.1` |
 | Hold humidity constant | `python simulate.py --sensor humidity --scenario flatline --node node-01 --fast --hours 0.1` |
-| Simulate node 1 going offline | `python simulate.py --scenario offline --node node-01 --fast --hours 0.1` |
+| Simulate node 1 going offline | `python simulate.py --scenario offline --node node-01 --fast --hours 2` |
 
 Sensor choices: `humidity`, `temperature`, `soil_moisture`, or `water` (alias for soil moisture).
 
