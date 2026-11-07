@@ -182,3 +182,43 @@ def test_fast_drop_is_flagged_but_normal_drying_and_rain_are_not(client):
 def test_large_fall_after_a_long_gap_is_not_a_fault(client):
     assert _send(client, 40.0, 0)["valid"] is True
     assert _send(client, 30.0, 180)["valid"] is True     # three hours later
+
+
+
+def test_humidity_flatline_is_detected_and_clears_when_humidity_changes(client):
+    results = []
+    for minute in range(4):
+        results.append(client.post("/readings", json={
+            **GOOD,
+            "soil_moisture": 40.0 + minute * 0.1,
+            "temperature": 27.0 + minute * 0.5,
+            "humidity": 54.0,
+            "timestamp": (_BASE + timedelta(minutes=minute * 5)).isoformat(),
+        }).json())
+    assert [result["valid"] for result in results] == [True, True, True, False]
+    assert results[-1]["flag"] == "humidity_flatline"
+    assert "humidity stuck" in client.get("/alerts").json()[0]["message"]
+
+    recovered = client.post("/readings", json={
+        **GOOD,
+        "soil_moisture": 40.5,
+        "temperature": 29.5,
+        "humidity": 53.5,
+        "timestamp": (_BASE + timedelta(minutes=20)).isoformat(),
+    })
+    assert recovered.json()["valid"] is True
+    assert client.get("/alerts").json() == []
+
+
+def test_temperature_flatline_is_detected(client):
+    results = []
+    for minute in range(4):
+        results.append(client.post("/readings", json={
+            **GOOD,
+            "soil_moisture": 40.0 + minute * 0.1,
+            "temperature": 28.0,
+            "humidity": 50.0 + minute,
+            "timestamp": (_BASE + timedelta(minutes=minute * 5)).isoformat(),
+        }).json())
+    assert [result["valid"] for result in results] == [True, True, True, False]
+    assert results[-1]["flag"] == "temperature_flatline"
