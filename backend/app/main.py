@@ -30,11 +30,12 @@ async def schedule_loop(interval: float):
 
 def ensure_owner_account():
     """Create or refresh the single defence-demo owner from backend environment settings."""
-    email = config.OWNER_EMAIL
-    password = config.OWNER_PASSWORD
-    full_name = config.OWNER_NAME
-    farm_name = config.FARM_NAME
-    location = config.FARM_LOCATION
+    settings = config.owner_settings()
+    email = settings["email"]
+    password = settings["password"]
+    full_name = settings["full_name"]
+    farm_name = settings["farm_name"]
+    location = settings["location"]
     if not password or len(password) < 10 or password.startswith("change-this"):
         raise RuntimeError(
             "Set SAFEAGRI_OWNER_PASSWORD to your own password (at least 10 characters) in backend/.env"
