@@ -20,7 +20,38 @@ safeagri-zm/
 - Node.js 18 or newer and npm
 - Git
 
-## 1. Start the backend
+## 1. Configure backend secrets (first installation)
+
+The API needs a persistent signing secret for login tokens and a one-time setup key for the first farmer account. Generate these once in PowerShell before starting the backend. Do not commit either value or share the signing secret.
+
+Run this block from PowerShell:
+
+```powershell
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$bytes = New-Object byte[] 48
+$rng.GetBytes($bytes)
+$secret = [Convert]::ToBase64String($bytes)
+$setup = [guid]::NewGuid().ToString("N")
+$rng.Dispose()
+
+[Environment]::SetEnvironmentVariable("SAFEAGRI_SECRET_KEY", $secret, "User")
+[Environment]::SetEnvironmentVariable("SAFEAGRI_INITIAL_SETUP_KEY", $setup, "User")
+$env:SAFEAGRI_SECRET_KEY = $secret
+$env:SAFEAGRI_INITIAL_SETUP_KEY = $setup
+
+Write-Host "Initial setup key (enter this during the first farmer registration): $setup"
+```
+
+Keep the setup key private. Complete the first farmer registration while the backend is running. After the first account has been created, remove the setup key from your Windows user environment; the API no longer needs it:
+
+```powershell
+[Environment]::SetEnvironmentVariable("SAFEAGRI_INITIAL_SETUP_KEY", $null, "User")
+Remove-Item Env:SAFEAGRI_INITIAL_SETUP_KEY -ErrorAction SilentlyContinue
+```
+
+Keep `SAFEAGRI_SECRET_KEY` unchanged across restarts. Changing it invalidates existing login tokens. New PowerShell windows load the saved user-level signing key automatically. If you generated the key in an older terminal, open a new terminal before starting the API.
+
+## 2. Start the backend
 
 Open a terminal in the repository root:
 
@@ -42,7 +73,7 @@ The API initializes its SQLite database and seeds the four configured fields whe
 
 Check the API on the computer at [http://localhost:8000/health](http://localhost:8000/health) or open the interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-## 2. Start the web dashboard
+## 3. Start the web dashboard
 
 Open a second terminal from the repository root:
 
@@ -56,7 +87,7 @@ Vite listens on all network interfaces at port `5173`. On the same computer, ope
 
 The dashboard automatically builds its API address from the hostname used in the browser, with port `8000`. For example, when a phone opens `http://192.168.1.20:5173`, its API requests go to `http://192.168.1.20:8000`. The optional `dashboard/.env` file is not required. If you need a different API host, copy `.env.example` to `.env`, set `VITE_API_URL`, and restart Vite.
 
-## 3. Open the dashboard on a phone
+## 4. Open the dashboard on a phone
 
 1. Connect the computer running the backend and dashboard to the same Wi-Fi network or mobile hotspot as the phone.
 2. Find the computer's local IPv4 address:
@@ -69,7 +100,7 @@ If the page opens but data does not load, check that the backend is running and 
 
 The backend CORS policy permits localhost and private-network IPv4 origins for local development/demo use. This is not production authentication or internet-facing security. Do not expose the development servers directly to the public internet.
 
-## 4. Run the sensor simulator (optional)
+## 5. Run the sensor simulator (optional)
 
 With the backend running, open another terminal:
 
@@ -94,7 +125,7 @@ python simulate.py --fast
 
 Generated fault logs are local and are not committed.
 
-## 5. Run backend tests
+## 6. Run backend tests
 
 From the repository root:
 
@@ -132,18 +163,18 @@ Keys travel in a plain header, so anything on the network path can read them ove
 
 The backend evaluates every field on a timer, so irrigation decisions do not wait for the dashboard's "Check irrigation now" button. The button still works for an immediate check.
 
-Incoming soil moisture readings are checked for three kinds of fault. A reading that fails any check is stored but marked invalid, excluded from decisions, and raises a sensor alert:
+Incoming sensor readings are checked for physical limits and repeated-value faults. Soil moisture also has an implausible-drop check. A reading that fails any check is stored but marked invalid, excluded from irrigation decisions, and raises a sensor alert:
 
 - Out of range: a value outside the sensor's physical limits (all three metrics).
-- Flatline: the same soil moisture value several readings in a row.
+- Flatline: the same soil moisture, temperature, or humidity value several readings in a row.
 - Implausible drop: soil moisture falling faster than soil can dry. Rises from rain or irrigation are normal and never flagged.
 
-The flatline and drop rules come from the experiments in `ml/`, where they outperformed the anomaly model. They apply to soil moisture only. These environment variables tune them:
+The soil-moisture drop rule and its flatline rule are based on the experiments in `ml/`. Temperature and humidity flatlines use the same configurable consecutive-reading count. These environment variables tune them:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SAFEAGRI_SCHEDULE_SECONDS` | `60` | Seconds between automatic irrigation checks. `0` turns the loop off. |
-| `SAFEAGRI_STUCK_RUN` | `4` | Identical moisture readings in a row that count as a flatline. |
+| `SAFEAGRI_STUCK_RUN` | `4` | Identical readings for any monitored metric in a row that count as a flatline. |
 | `SAFEAGRI_DROP_LIMIT` | `2.2` | Largest soil moisture fall (percentage points) between readings before it is flagged. |
 | `SAFEAGRI_STALE_MINUTES` | `15` | Minutes without a packet before a node is offline. The drop rule is also skipped across gaps longer than this. |
 
