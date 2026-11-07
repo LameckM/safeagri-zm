@@ -26,7 +26,7 @@ Scenario choices: `normal`, `low`, `high`, `spike`, `flatline`, and `offline`.
 
 - `high` and `spike` deliberately exceed physical validation limits and should create a sensor-fault alert.
 - `low` changes only the selected metric. Low soil moisture triggers the existing dry-soil rule. Low humidity and low temperature are valid physical values in the current validation rules; they do not currently have agronomic warning thresholds.
-- `flatline` holds only the selected metric constant. The simulator logs this condition, but a flatline alert is not implemented in the backend yet.
+- `flatline` holds only the selected metric constant. The backend flags repeated soil-moisture, temperature, and humidity values after the configured `SAFEAGRI_STUCK_RUN` count (default: four consecutive readings).
 - `offline` sends one initial packet for the target node and then stops sending packets for that node. Other nodes continue normally. A new packet from the node resolves its offline alert.
 - `--fast` advances each five-minute simulation step every 0.05 seconds. Without it, each step waits five real minutes.
 
