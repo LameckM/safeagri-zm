@@ -165,3 +165,40 @@ def test_registration_requires_setup_key_for_first_account(tmp_path, monkeypatch
         }
         assert c.post("/auth/register", json=payload).status_code == 403
         assert c.post("/auth/register", json={**payload, "setup_key": "correct-setup-key"}).status_code == 201
+
+
+# --- trend rules: flatline and implausible drop -----------------------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_BASE = datetime(2026, 9, 19, 14, 0, tzinfo=timezone.utc)
+
+
+def _send(client, moisture, minutes):
+    body = {**GOOD, "soil_moisture": moisture, "timestamp": (_BASE + timedelta(minutes=minutes)).isoformat()}
+    return client.post("/readings", json=body).json()
+
+
+def test_flatline_is_flagged_on_fourth_identical_reading_and_clears_when_value_moves(client):
+    results = [_send(client, 40.0, m * 5) for m in range(5)]
+    assert [r["valid"] for r in results] == [True, True, True, False, False]
+    assert results[3]["flag"] == "soil_moisture_flatline"
+    alerts = client.get("/alerts").json()
+    assert len(alerts) == 1 and "stuck" in alerts[0]["message"]
+    assert _send(client, 39.8, 25)["valid"] is True
+    assert client.get("/alerts").json() == []
+
+
+def test_fast_drop_is_flagged_but_normal_drying_and_rain_are_not(client):
+    assert _send(client, 40.0, 0)["valid"] is True
+    assert _send(client, 39.8, 5)["valid"] is True      # normal drying
+    assert _send(client, 60.0, 10)["valid"] is True     # rain or irrigation
+    bad = _send(client, 50.0, 15)                        # 10 points in five minutes
+    assert bad["valid"] is False
+    assert bad["flag"] == "soil_moisture_implausible_drop"
+    assert "faster than soil can dry" in client.get("/alerts").json()[0]["message"]
+
+
+def test_large_fall_after_a_long_gap_is_not_a_fault(client):
+    assert _send(client, 40.0, 0)["valid"] is True
+    assert _send(client, 30.0, 180)["valid"] is True     # three hours later

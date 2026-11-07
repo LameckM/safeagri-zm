@@ -102,6 +102,27 @@ python -m pytest
 
 The tests use a temporary SQLite database; they do not need to overwrite the normal local database.
 
+## Irrigation scheduling and sensor checks
+
+The backend evaluates every field on a timer, so irrigation decisions do not wait for the dashboard's "Check irrigation now" button. The button still works for an immediate check.
+
+Incoming soil moisture readings are checked for three kinds of fault. A reading that fails any check is stored but marked invalid, excluded from decisions, and raises a sensor alert:
+
+- Out of range: a value outside the sensor's physical limits (all three metrics).
+- Flatline: the same soil moisture value several readings in a row.
+- Implausible drop: soil moisture falling faster than soil can dry. Rises from rain or irrigation are normal and never flagged.
+
+The flatline and drop rules come from the experiments in `ml/`, where they outperformed the anomaly model. They apply to soil moisture only. These environment variables tune them:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SAFEAGRI_SCHEDULE_SECONDS` | `60` | Seconds between automatic irrigation checks. `0` turns the loop off. |
+| `SAFEAGRI_STUCK_RUN` | `4` | Identical moisture readings in a row that count as a flatline. |
+| `SAFEAGRI_DROP_LIMIT` | `2.2` | Largest soil moisture fall (percentage points) between readings before it is flagged. |
+| `SAFEAGRI_STALE_MINUTES` | `15` | Minutes without a packet before a node is offline. The drop rule is also skipped across gaps longer than this. |
+
+The flatline default was tuned on simulated data at 0.1% resolution. If the real ESP32 reports whole-number percentages, raise `SAFEAGRI_STUCK_RUN` or slow drying will trigger false flatline alerts.
+
 ## Notes
 
 - The responsive web dashboard is the supported phone interface; the separate Expo `mobile-dashboard/` application has been retired.

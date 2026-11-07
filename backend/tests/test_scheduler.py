@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -162,3 +163,42 @@ def test_short_configured_timeout_marks_node_offline(client, monkeypatch):
     client.post("/alerts/sync")
     active = client.get("/alerts").json()
     assert not any(a["kind"] == "node_offline" and a["field_id"] == 3 for a in active)
+
+
+def _scheduler_client(tmp_path, monkeypatch, interval):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setenv("SAFEAGRI_SECRET_KEY", "test-secret-key-for-safeagri-tests-only")
+    monkeypatch.setenv("SAFEAGRI_INITIAL_SETUP_KEY", "test-initial-setup-key")
+    monkeypatch.setenv("SAFEAGRI_SCHEDULE_SECONDS", interval)
+    return TestClient(app)
+
+
+def _register(c):
+    response = c.post("/auth/register", json={
+        "full_name": "Test Farmer", "email": "farmer@example.com",
+        "password": "test-password-123", "farm_name": "Test Farm",
+        "setup_key": "test-initial-setup-key",
+    })
+    assert response.status_code == 201, response.text
+    c.headers["Authorization"] = "Bearer " + response.json()["access_token"]
+
+
+def test_background_loop_opens_irrigation_without_a_manual_check(tmp_path, monkeypatch):
+    with _scheduler_client(tmp_path, monkeypatch, "0.05") as c:
+        _register(c)
+        assert post_reading(c, "node-01", 18).status_code == 201
+        events = []
+        for _ in range(60):
+            events = c.get("/schedule/events").json()
+            if events:
+                break
+            time.sleep(0.05)
+        assert events and events[0]["action"] == "open" and events[0]["source"] == "rule"
+
+
+def test_background_loop_can_be_disabled(tmp_path, monkeypatch):
+    with _scheduler_client(tmp_path, monkeypatch, "0") as c:
+        _register(c)
+        assert post_reading(c, "node-01", 18).status_code == 201
+        time.sleep(0.4)
+        assert c.get("/schedule/events").json() == []

@@ -1,5 +1,8 @@
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 import os
 import secrets
 
@@ -10,13 +13,33 @@ from . import auth
 from .db import get_conn, init_db
 from .scheduler import run_schedule, sync_node_alerts
 from .schemas import FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
-from .validation import check_reading_flags
+from .validation import check_reading_flags, check_trend_flags, describe_flag
+
+log = logging.getLogger("safeagri")
+
+
+async def schedule_loop(interval: float):
+    """Evaluate every field on a timer so irrigation decisions never wait for a click."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(run_schedule)
+        except Exception:
+            log.exception("Scheduled irrigation check failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    interval = float(os.getenv("SAFEAGRI_SCHEDULE_SECONDS", "60"))
+    task = asyncio.create_task(schedule_loop(interval)) if interval > 0 else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(title="SafeAgri Smart Irrigation API", lifespan=lifespan)
@@ -163,6 +186,22 @@ def create_reading(payload: ReadingIn):
         field = conn.execute("SELECT id, name FROM fields WHERE node_id = ?", (payload.node_id,)).fetchone()
         if field is None:
             raise HTTPException(status_code=404, detail=f"Unknown node_id: {payload.node_id}")
+        recent = conn.execute(
+            "SELECT soil_moisture FROM readings WHERE field_id = ? ORDER BY id DESC LIMIT 10",
+            (field["id"],),
+        ).fetchall()
+        last_ok = conn.execute(
+            """SELECT soil_moisture, recorded_at FROM readings
+               WHERE field_id = ? AND soil_moisture BETWEEN 0 AND 100
+               ORDER BY id DESC LIMIT 1""",
+            (field["id"],),
+        ).fetchone()
+        flags += check_trend_flags(
+            payload.soil_moisture,
+            recorded_at,
+            [row["soil_moisture"] for row in recent],
+            (last_ok["soil_moisture"], last_ok["recorded_at"]) if last_ok else None,
+        )
         cur = conn.execute(
             """INSERT INTO readings
                (field_id, soil_moisture, temperature, humidity, recorded_at, received_at, valid, flag)
@@ -171,7 +210,7 @@ def create_reading(payload: ReadingIn):
         )
         if flags:
             message = f"{field['name']}: " + "; ".join(
-                f"{flag.removesuffix('_out_of_range').replace('_', ' ')} reading {getattr(payload, flag.removesuffix('_out_of_range'))} is out of range"
+                describe_flag(flag, payload.soil_moisture, payload.temperature, payload.humidity)
                 for flag in flags
             )
             existing = conn.execute("SELECT id FROM alerts WHERE field_id = ? AND kind = 'sensor_fault' AND resolved = 0", (field["id"],)).fetchone()
