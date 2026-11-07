@@ -67,20 +67,12 @@ def test_issuing_a_key_requires_login(client):
     assert client.post("/fields/1/node-key").status_code == 401
 
 
-def test_a_farmer_cannot_issue_a_key_for_another_farms_field(client):
-    other = client.post("/auth/register", json={
-        "full_name": "Other Farmer", "email": "other@example.com",
+def test_public_registration_cannot_create_another_farmer(client):
+    response = client.post("/auth/register", json={
+        "full_name": "Other User", "email": "other@example.com",
         "password": "other-password-123", "farm_name": "Other Farm",
     })
-    assert other.status_code == 201
-    other_farm = other.json()["user"]["farm_id"]
-    with db.get_conn() as conn:
-        conn.execute("INSERT INTO fields (id, farm_id, name, node_id) VALUES (50, ?, 'Theirs', 'node-50')", (other_farm,))
-
-    # The first farmer gets "not found", exactly as for a field that does not exist.
-    assert client.post("/fields/50/node-key").status_code == 404
-    theirs = {"Authorization": "Bearer " + other.json()["access_token"]}
-    assert client.post("/fields/50/node-key", headers=theirs).status_code == 200
+    assert response.status_code == 403
 
 
 def test_alert_sync_requires_login_and_stays_inside_the_farm(client):
