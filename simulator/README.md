@@ -46,7 +46,7 @@ Then, in a second terminal:
 
 ```powershell
 cd simulator
-python simulate.py --scenario offline --node node-01 --fast --hours 0.1
+python simulate.py --scenario offline --node node-01 --fast --hours 2
 ```
 
 With a 0.01-minute timeout (0.6 seconds), node-01 should become offline while nodes 2–4 keep reporting. To test recovery, stop the offline simulation and run normal simulation again:
