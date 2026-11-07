@@ -6,6 +6,7 @@ Run from the repository root:
 """
 import argparse
 from datetime import datetime, timezone
+from backend.app import db
 from backend.app.db import init_db, get_conn
 
 NODES = ("node-01", "node-02", "node-03", "node-04")
@@ -15,6 +16,8 @@ def main():
     parser.add_argument("node", choices=NODES)
     parser.add_argument("state", choices=("online", "offline"))
     args = parser.parse_args()
+    if not __import__("os").getenv("DB_PATH"):
+        db.DB_PATH = __import__("pathlib").Path(__file__).resolve().parent / "data" / "irrigation.db"
     init_db()
     online = int(args.state == "online")
     now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
