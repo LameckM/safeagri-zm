@@ -6,7 +6,7 @@ import logging
 import os
 import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth
@@ -155,11 +155,38 @@ def get_me(user: dict = Depends(current_user)):
     return user
 
 
+# Never SELECT * from fields in a response: node_key_hash must not leave the server.
+PUBLIC_FIELD_COLUMNS = "id, farm_id, name, node_id, crop, (node_key_hash IS NOT NULL) AS has_node_key"
+
+
+def public_field(row) -> dict:
+    field = dict(row)
+    field["has_node_key"] = bool(field["has_node_key"])
+    return field
+
+
 @app.get("/fields")
 def list_fields(user: dict = Depends(current_user)):
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM fields WHERE farm_id = ? ORDER BY id", (user["farm_id"],)).fetchall()
-    return [dict(r) for r in rows]
+        rows = conn.execute(
+            f"SELECT {PUBLIC_FIELD_COLUMNS} FROM fields WHERE farm_id = ? ORDER BY id", (user["farm_id"],)
+        ).fetchall()
+    return [public_field(r) for r in rows]
+
+
+@app.post("/fields/{field_id}/node-key")
+def issue_node_key(field_id: int, response: Response, user: dict = Depends(current_user)):
+    """Issue (or rotate) the credential a sensor node sends in the X-Node-Key header.
+
+    The key is returned once and only its hash is stored. Issuing a new key
+    immediately stops the previous one from working.
+    """
+    key = auth.generate_node_key()
+    with get_conn() as conn:
+        field = require_owned_field(conn, field_id, user["farm_id"])
+        conn.execute("UPDATE fields SET node_key_hash = ? WHERE id = ?", (auth.hash_node_key(key), field_id))
+    response.headers["Cache-Control"] = "no-store"
+    return {"field_id": field_id, "node_id": field["node_id"], "node_key": key}
 
 
 @app.patch("/fields/{field_id}")
@@ -171,21 +198,26 @@ def update_field(field_id: int, payload: FieldUpdate, user: dict = Depends(curre
     with get_conn() as conn:
         require_owned_field(conn, field_id, user["farm_id"])
         conn.execute(f"UPDATE fields SET {assignments} WHERE id = ? AND farm_id = ?", [*changes.values(), field_id, user["farm_id"]])
-        row = conn.execute("SELECT * FROM fields WHERE id = ?", (field_id,)).fetchone()
-    return dict(row)
+        row = conn.execute(f"SELECT {PUBLIC_FIELD_COLUMNS} FROM fields WHERE id = ?", (field_id,)).fetchone()
+    return public_field(row)
 
 
 @app.post("/readings", response_model=ReadingOut, status_code=201)
-def create_reading(payload: ReadingIn):
-    # Simulator/device ingestion remains node-ID based for now; add per-node
-    # credentials before exposing physical devices to an untrusted network.
+def create_reading(payload: ReadingIn, x_node_key: str | None = Header(default=None)):
     received_at = utc_iso()
     recorded_at = utc_iso(payload.timestamp) if payload.timestamp else received_at
     flags = check_reading_flags(payload.soil_moisture, payload.temperature, payload.humidity)
     with get_conn() as conn:
-        field = conn.execute("SELECT id, name FROM fields WHERE node_id = ?", (payload.node_id,)).fetchone()
-        if field is None:
-            raise HTTPException(status_code=404, detail=f"Unknown node_id: {payload.node_id}")
+        field = conn.execute(
+            "SELECT id, name, node_key_hash FROM fields WHERE node_id = ?", (payload.node_id,)
+        ).fetchone()
+        stored_hash = field["node_key_hash"] if field else None
+        if not auth.node_key_matches(x_node_key, stored_hash):
+            # One answer for unknown node, no key issued, and wrong key, so the
+            # API does not reveal which node IDs exist. The log says which it was.
+            reason = "unknown node" if field is None else "no key issued" if stored_hash is None else "wrong or missing key"
+            log.warning("Reading rejected for node %r: %s", payload.node_id, reason)
+            raise HTTPException(status_code=401, detail="Invalid node credentials")
         recent = conn.execute(
             "SELECT soil_moisture FROM readings WHERE field_id = ? ORDER BY id DESC LIMIT 10",
             (field["id"],),
@@ -257,8 +289,8 @@ def latest_per_field(user: dict = Depends(current_user)):
 
 
 @app.post("/alerts/sync")
-def synchronize_alerts():
-    sync_node_alerts()
+def synchronize_alerts(user: dict = Depends(current_user)):
+    sync_node_alerts(user["farm_id"])
     return {"status": "synced"}
 
 

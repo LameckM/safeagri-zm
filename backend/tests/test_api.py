@@ -1,27 +1,7 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from app import db
 from app.main import app
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setenv("SAFEAGRI_SECRET_KEY", "test-secret-key-for-safeagri-tests-only")
-    monkeypatch.setenv("SAFEAGRI_INITIAL_SETUP_KEY", "test-initial-setup-key")
-    with TestClient(app) as c:
-        response = c.post("/auth/register", json={
-            "full_name": "Test Farmer",
-            "email": "farmer@example.com",
-            "password": "test-password-123",
-            "farm_name": "Test Farm",
-            "location": "Luanshya",
-            "setup_key": "test-initial-setup-key",
-        })
-        assert response.status_code == 201, response.text
-        c.headers["Authorization"] = "Bearer " + response.json()["access_token"]
-        yield c
 
 GOOD = {"node_id": "node-02", "soil_moisture": 18, "temperature": 29, "humidity": 54}
 
@@ -58,8 +38,8 @@ def test_out_of_range_reading_is_flagged_not_trusted(client):
 
 
 def test_unknown_node_is_rejected(client):
-    r = client.post("/readings", json={**GOOD, "node_id": "node-99"})
-    assert r.status_code == 404
+    r = client.post("/readings", json={**GOOD, "node_id": "node-99"}, headers={"X-Node-Key": "sak_anything"})
+    assert r.status_code == 401
 
 
 def test_missing_field_is_rejected(client):

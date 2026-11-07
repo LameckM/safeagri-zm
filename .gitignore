@@ -26,3 +26,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Node credentials issued by simulator/provision_keys.py
+node_keys.json

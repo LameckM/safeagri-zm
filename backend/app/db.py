@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS fields (
     farm_id INTEGER REFERENCES farms(id),
     name TEXT NOT NULL,
     node_id TEXT NOT NULL UNIQUE,
-    crop TEXT NOT NULL DEFAULT 'maize'
+    crop TEXT NOT NULL DEFAULT 'maize',
+    node_key_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS readings (
@@ -100,6 +101,8 @@ def _migrate_existing_database(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(fields)")}
     if "farm_id" not in columns:
         conn.execute("ALTER TABLE fields ADD COLUMN farm_id INTEGER REFERENCES farms(id)")
+    if "node_key_hash" not in columns:
+        conn.execute("ALTER TABLE fields ADD COLUMN node_key_hash TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_fields_farm ON fields(farm_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id)")
 

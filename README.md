@@ -78,8 +78,12 @@ cd simulator
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+$env:SAFEAGRI_EMAIL = "you@example.com"
+python provision_keys.py
 python simulate.py --fast
 ```
+
+The backend only accepts readings from nodes that present a key (see "Sensor node keys" below). `provision_keys.py` logs in as your farmer account, issues a key for every field, and saves them to `simulator/node_keys.json`, which is not committed. You only need to run it once, or again to rotate the keys.
 
 Use `python simulate.py` for the five-minute real-time interval, or `python simulate.py --hours 24` to stop after 24 simulated hours. The simulator sends readings to `http://localhost:8000` by default. Set `SAFEAGRI_API_URL` if the API is running elsewhere:
 
@@ -101,6 +105,28 @@ python -m pytest
 ```
 
 The tests use a temporary SQLite database; they do not need to overwrite the normal local database.
+
+## Sensor node keys
+
+Every reading must carry the key of the node that sent it, in an `X-Node-Key` header. Without it anyone who can reach the API could post fake moisture values and steer irrigation decisions.
+
+A logged-in farmer issues a key with `POST /fields/{field_id}/node-key`. The response contains the key once and the server keeps only its hash, so write it into the device firmware straight away. Issuing a new key for a field immediately stops the old one working. `GET /fields` shows `has_node_key` for each field but never the key.
+
+A device sends, for example:
+
+```
+POST /readings
+X-Node-Key: sak_...
+Content-Type: application/json
+
+{"node_id": "node-01", "soil_moisture": 41.2, "temperature": 27.5, "humidity": 58}
+```
+
+A reading with a missing or wrong key, an unknown `node_id`, or a node that has no key yet all get the same `401`, so the API does not reveal which node IDs exist. The server log records which of those it was.
+
+Upgrading an existing database adds the key column automatically, but every node starts with no key and is rejected until you issue one. `POST /alerts/sync` now requires a farmer login and only touches that farmer's own fields.
+
+Keys travel in a plain header, so anything on the network path can read them over HTTP. Put the API behind HTTPS before any device reports over a network you do not control.
 
 ## Irrigation scheduling and sensor checks
 

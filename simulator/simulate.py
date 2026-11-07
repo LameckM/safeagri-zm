@@ -8,8 +8,12 @@ Examples:
 
 When --node is supplied, that node receives the selected test scenario while
 all other nodes continue sending normal readings.
+
+Every node must present its own key. Create them once with provision_keys.py,
+which saves node_keys.json next to this file.
 """
 import argparse
+import json
 import logging
 import math
 import os
@@ -31,7 +35,7 @@ log = logging.getLogger("simulator")
 
 API_BASE = os.getenv("SAFEAGRI_API_URL", "http://localhost:8000").rstrip("/")
 READINGS_URL = f"{API_BASE}/readings"
-ALERT_SYNC_URL = f"{API_BASE}/alerts/sync"
+KEYS_PATH = Path(os.getenv("SAFEAGRI_NODE_KEYS_FILE", Path(__file__).parent / "node_keys.json"))
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
 INTERVAL_MIN = 5
 
@@ -124,9 +128,17 @@ def apply_scenario(reading, sensor, scenario, held_values):
     return reading
 
 
-def post_reading(client, reading):
+def load_node_keys(path=KEYS_PATH):
     try:
-        response = client.post(READINGS_URL, json=reading, timeout=5)
+        return json.loads(Path(path).read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def post_reading(client, reading, node_key=None):
+    headers = {"X-Node-Key": node_key} if node_key else {}
+    try:
+        response = client.post(READINGS_URL, json=reading, headers=headers, timeout=5)
         if response.status_code != 201:
             log.warning("API rejected reading: %s %s", response.status_code, response.text)
         else:
@@ -140,19 +152,18 @@ def post_reading(client, reading):
         log.error("API connection failed: %s", exc)
 
 
-def sync_alerts(client):
-    try:
-        response = client.post(ALERT_SYNC_URL, timeout=5)
-        if response.status_code != 200:
-            log.warning("Alert synchronization failed: %s %s", response.status_code, response.text)
-    except httpx.HTTPError as exc:
-        log.error("Could not synchronize alerts: %s", exc)
-
-
-def run(fast=False, hours=None, sensor=None, scenario="normal", node=None):
+def run(fast=False, hours=None, sensor=None, scenario="normal", node=None, node_keys=None):
     # Always keep all nodes running. --node selects only which node receives
     # the injected fault; it must not silence the other fields.
     fields = make_fields()
+    if node_keys is None:
+        node_keys = load_node_keys()
+    if not node_keys:
+        log.error("No node keys found at %s. Run provision_keys.py first.", KEYS_PATH)
+        return
+    for field in fields:
+        if field.node_id not in node_keys:
+            log.warning("No key for %s: its readings will be rejected", field.node_id)
     sensor = normalize_sensor(sensor)
     moment = datetime.now(timezone.utc)
     end = moment + timedelta(hours=hours) if hours is not None else None
@@ -176,7 +187,7 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None):
                     # Send one fresh baseline packet first. Subsequent cycles
                     # deliberately omit this node so the backend can age it out.
                     if field.node_id not in offline_armed:
-                        post_reading(client, reading)
+                        post_reading(client, reading, node_keys.get(field.node_id))
                         offline_armed.add(field.node_id)
                         log.warning(
                             "OFFLINE TEST ARMED for %s: no more packets will be sent",
@@ -190,10 +201,8 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None):
                     reading = apply_scenario(reading, sensor, scenario, held_values)
 
                 if reading is not None:
-                    post_reading(client, reading)
+                    post_reading(client, reading, node_keys.get(field.node_id))
 
-            # Let the backend update offline/dry-soil alert state during a test.
-            sync_alerts(client)
             moment += timedelta(minutes=INTERVAL_MIN)
             time.sleep(delay)
 
