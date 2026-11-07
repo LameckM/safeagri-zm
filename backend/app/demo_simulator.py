@@ -1,7 +1,7 @@
 """Automatic defence-demo sensor simulator.
 
 The simulator runs inside the API process. Node connectivity is controlled
-separately with: python -m simulator.node_control node-01 offline|online
+separately with: python -m backend.node_control node-01 offline|online
 """
 import asyncio
 import logging
