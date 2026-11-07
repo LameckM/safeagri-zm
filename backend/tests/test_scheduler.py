@@ -135,3 +135,21 @@ def test_dry_soil_alert_resolves_when_moisture_recovers(client):
     post_reading(client, "node-01", moisture=40)
     client.post("/alerts/sync")
     assert not any(a["kind"] == "dry_soil" for a in client.get("/alerts").json())
+
+
+def test_short_configured_timeout_marks_node_offline(client, monkeypatch):
+    from app import scheduler
+
+    monkeypatch.setattr(scheduler, "STALE_MINUTES", 0.01)
+    post_reading(client, "node-03", moisture=40)
+    age_received_packet("node-03", 1)
+
+    client.post("/alerts/sync")
+    alerts = client.get("/alerts").json()
+    assert any(a["kind"] == "node_offline" and a["field_id"] == 3 for a in alerts)
+
+    # A new packet from this node restores it and resolves the active alert.
+    post_reading(client, "node-03", moisture=40)
+    client.post("/alerts/sync")
+    active = client.get("/alerts").json()
+    assert not any(a["kind"] == "node_offline" and a["field_id"] == 3 for a in active)
