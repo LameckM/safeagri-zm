@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
 import os
-import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +12,7 @@ from . import auth
 from .db import get_conn, init_db
 from .demo_simulator import demo_simulation_loop, set_demo_fault, clear_demo_fault
 from .scheduler import run_schedule, sync_node_alerts
-from .schemas import DemoFaultIn, DemoFaultClearIn, FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
+from .schemas import DemoFaultIn, DemoFaultClearIn, FieldUpdate, LoginIn, ReadingIn, ReadingOut
 from .validation import check_metric_flatline, check_reading_flags, check_trend_flags, describe_flag
 
 log = logging.getLogger("safeagri")
