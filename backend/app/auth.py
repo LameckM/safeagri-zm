@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from pwdlib import PasswordHash
 
+from . import config  # noqa: F401 - loads backend/.env before auth settings are read
+
 _password_hash = PasswordHash.recommended()
 ALGORITHM = "HS256"
 TOKEN_MINUTES = int(os.getenv("SAFEAGRI_TOKEN_MINUTES", "720"))
