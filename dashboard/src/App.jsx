@@ -112,8 +112,8 @@ export default function App() {
     let active = true;
     api.me().then((account) => {
       if (active) setUser(account);
-    }).catch(() => {
-      authStore.clearToken();
+    }).catch((err) => {
+      if (err.status === 401) authStore.clearToken();
       if (active) setUser(null);
     }).finally(() => {
       if (active) setAuthLoading(false);
