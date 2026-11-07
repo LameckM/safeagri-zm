@@ -8,36 +8,21 @@ import IrrigationLog from "./components/IrrigationLog.jsx";
 const POLL_MS = 10_000;
 
 function AuthScreen({ onAuthenticated }) {
-  const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({
-    full_name: "", email: "", password: "", farm_name: "", location: "", setup_key: "",
-  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  function update(event) {
-    setForm((old) => ({ ...old, [event.target.name]: event.target.value }));
-  }
 
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const result = mode === "login"
-        ? await api.login({ email: form.email, password: form.password })
-        : await api.register({
-            full_name: form.full_name,
-            email: form.email,
-            password: form.password,
-            farm_name: form.farm_name,
-            location: form.location || null,
-            ...(form.setup_key ? { setup_key: form.setup_key } : {}),
-          });
+      const result = await api.login({ email, password });
       authStore.setToken(result.access_token);
       onAuthenticated(result.user);
     } catch (err) {
-      setError(err.message || "Unable to sign in. Please try again.");
+      setError(err.message || "Unable to sign in. Please check your credentials.");
     } finally {
       setBusy(false);
     }
@@ -54,32 +39,16 @@ function AuthScreen({ onAuthenticated }) {
           </div>
         </div>
         <div className="auth-intro">
-          <h2>{mode === "login" ? "Welcome back" : "Create your farm account"}</h2>
-          <p>{mode === "login"
-            ? "Sign in to monitor your fields and irrigation activity."
-            : "Set up your farm workspace to start monitoring your fields."}</p>
+          <h2>Owner sign in</h2>
+          <p>Sign in to monitor the Kafubu demonstration fields and irrigation activity.</p>
         </div>
         <form className="auth-form" onSubmit={submit}>
-          {mode === "register" && <>
-            <label>Full name<input name="full_name" value={form.full_name} onChange={update} autoComplete="name" required minLength={2} maxLength={100} /></label>
-            <label>Farm name<input name="farm_name" value={form.farm_name} onChange={update} required minLength={2} maxLength={120} /></label>
-            <label>Farm location <span className="auth-optional">(optional)</span><input name="location" value={form.location} onChange={update} placeholder="e.g. Kafubu Block, Luanshya" maxLength={160} /></label>
-          </>}
-          <label>Email address<input type="email" name="email" value={form.email} onChange={update} autoComplete="email" required /></label>
-          <label>Password<input type="password" name="password" value={form.password} onChange={update} autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={mode === "register" ? 10 : 1} maxLength={128} /></label>
-          {mode === "register" && <>
-            <label>Initial setup key <span className="auth-optional">(first account only)</span><input type="password" name="setup_key" value={form.setup_key} onChange={update} autoComplete="off" /></label>
-            <p className="auth-help">The farm administrator must provide this key when creating the first account. Later registrations do not need it.</p>
-          </>}
+          <label>Owner email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
+          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
           {error && <p className="auth-error" role="alert">{error}</p>}
-          <button className="auth-submit" type="submit" disabled={busy}>{busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}</button>
+          <button className="auth-submit" type="submit" disabled={busy}>{busy ? "Signing in..." : "Sign in"}</button>
         </form>
-        <p className="auth-switch">
-          {mode === "login" ? "New to SafeAgri?" : "Already have an account?"}
-          {" "}<button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>
-            {mode === "login" ? "Create an account" : "Sign in"}
-          </button>
-        </p>
+        <p className="auth-help">This demonstration is restricted to the configured project owner. New account registration is disabled.</p>
       </section>
     </main>
   );
@@ -207,7 +176,7 @@ export default function App() {
         <div>
           <h1>SafeAgri</h1>
           <p className="page__subtitle">{user.farm_name}{user.farm_location ? ` · ${user.farm_location}` : ""}</p>
-          <p className="page__farmer">Farmer: {user.full_name}</p>
+          <p className="page__farmer">System owner: {user.full_name}</p>
         </div>
         <div className="header-actions">
           <StatusPill offlineCount={offlineCount} alertCount={alerts.length} awaitingCount={awaitingCount} />
