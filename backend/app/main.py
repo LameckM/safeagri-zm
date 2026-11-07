@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import auth
 from .db import get_conn, init_db
 from .scheduler import run_schedule, sync_node_alerts
-from .schemas import FieldCreate, FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
+from .schemas import FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
 from .validation import check_reading_flags
 
 
@@ -137,22 +137,6 @@ def list_fields(user: dict = Depends(current_user)):
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM fields WHERE farm_id = ? ORDER BY id", (user["farm_id"],)).fetchall()
     return [dict(r) for r in rows]
-
-
-@app.post("/fields", status_code=201)
-def create_field(payload: FieldCreate, user: dict = Depends(current_user)):
-    with get_conn() as conn:
-        try:
-            cur = conn.execute(
-                "INSERT INTO fields (farm_id, name, node_id, crop) VALUES (?, ?, ?, ?)",
-                (user["farm_id"], payload.name, payload.node_id, payload.crop),
-            )
-        except Exception as exc:
-            if "UNIQUE constraint failed: fields.node_id" in str(exc):
-                raise HTTPException(status_code=409, detail="That node ID is already assigned")
-            raise
-        row = conn.execute("SELECT * FROM fields WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return dict(row)
 
 
 @app.patch("/fields/{field_id}")
