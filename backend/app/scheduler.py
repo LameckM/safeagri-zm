@@ -16,7 +16,13 @@ def _is_stale(received_at, now):
         stamp = stamp.replace(tzinfo=timezone.utc)
     return now - stamp > timedelta(minutes=STALE_MINUTES)
 
+def _forced_offline(conn, node_id):
+    row = conn.execute("SELECT online FROM node_status WHERE node_id = ?", (node_id,)).fetchone()
+    return row is not None and not bool(row["online"])
+
 def evaluate_field(conn, field_row):
+    if _forced_offline(conn, field_row["node_id"]):
+        return {"field_id": field_row["id"], "field_name": field_row["name"], "action": "skip", "reason": "node_offline", "duration_min": None, "moisture": None}
     latest = _latest_packet(conn, field_row["id"])
     decision = {"field_id": field_row["id"], "field_name": field_row["name"], "action": "skip", "reason": None, "duration_min": None, "moisture": None}
     if latest is None:
@@ -59,12 +65,14 @@ def sync_node_alerts(farm_id=None):
             params.append(farm_id)
         for field in conn.execute(sql + " ORDER BY id", params).fetchall():
             latest = _latest_packet(conn, field["id"])
-            if latest is None:
+            forced_offline = _forced_offline(conn, field["node_id"])
+            if latest is None and not forced_offline:
                 continue
-            stale = _is_stale(latest["received_at"], now)
+            stale = forced_offline or (latest is not None and _is_stale(latest["received_at"], now))
             _sync_alert(conn, field["id"], "node_offline", stale, f"{field['name']}: no sensor packet received in over {STALE_MINUTES:g} minutes", now_text)
-            dry = not stale and bool(latest["valid"]) and latest["soil_moisture"] <= DRY_THRESHOLD
-            _sync_alert(conn, field["id"], "dry_soil", dry, f"{field['name']}: soil moisture is low ({latest['soil_moisture']}%). Irrigation is recommended.", now_text)
+            dry = not stale and latest is not None and bool(latest["valid"]) and latest["soil_moisture"] <= DRY_THRESHOLD
+            dry_message = f"{field['name']}: soil moisture is low ({latest['soil_moisture']}%). Irrigation is recommended." if latest is not None else f"{field['name']}: soil moisture is low. Irrigation is recommended."
+            _sync_alert(conn, field["id"], "dry_soil", dry, dry_message, now_text)
 
 def run_schedule(farm_id=None):
     sync_node_alerts(farm_id)
