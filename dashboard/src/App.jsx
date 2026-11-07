@@ -57,11 +57,12 @@ export default function App() {
   }
 
   const awaitingCount = fields.filter((f) => !readingsByField[f.id]?.last_seen_at).length;
-  const offlineCount = fields.filter((f) => {
-    const r = readingsByField[f.id];
-    if (!r?.last_seen_at) return false;
-    return (Date.now() - new Date(r.last_seen_at).getTime()) / 60000 > 15;
-  }).length;
+  // The backend owns the offline timeout. Derive the dashboard status from
+  // its active alert so configurable simulator thresholds are reflected here.
+  const offlineFieldIds = new Set(
+    alerts.filter((alert) => alert.kind === "node_offline").map((alert) => alert.field_id)
+  );
+  const offlineCount = offlineFieldIds.size;
 
   return (
     <div className="page">
@@ -83,7 +84,12 @@ export default function App() {
       <section className="field-grid">
         {fields.length === 0 && !connectionError && <p className="panel__empty">Loading fields...</p>}
         {fields.map((field) => (
-          <FieldCard key={field.id} field={field} reading={readingsByField[field.id]} />
+          <FieldCard
+            key={field.id}
+            field={field}
+            reading={readingsByField[field.id]}
+            offline={offlineFieldIds.has(field.id)}
+          />
         ))}
       </section>
 
