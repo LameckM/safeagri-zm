@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS irrigation_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id);
+
+CREATE TABLE IF NOT EXISTS node_status (
+    node_id TEXT PRIMARY KEY,
+    online INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
 """
 
 SEED_FIELDS = [
