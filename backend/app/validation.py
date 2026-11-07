@@ -50,6 +50,18 @@ def check_reading(soil_moisture: float, temperature: float, humidity: float) -> 
     return flags[0] if flags else None
 
 
+
+def check_metric_flatline(metric: str, value: float, recent_values: list[float]) -> list[str]:
+    """Flag a non-soil sensor that repeats the same in-range value too long."""
+    low, high = LIMITS[metric]
+    if not low <= value <= high:
+        return []
+    needed = _stuck_run() - 1
+    if len(recent_values) >= needed and all(v == value for v in recent_values[:needed]):
+        return [f"{metric}_flatline"]
+    return []
+
+
 def check_trend_flags(
     soil_moisture: float,
     recorded_at: str,
@@ -90,5 +102,8 @@ def describe_flag(flag: str, soil_moisture: float, temperature: float, humidity:
         return f"soil moisture stuck at {soil_moisture} for {_stuck_run()} readings in a row"
     if flag == DROP_FLAG:
         return "soil moisture fell faster than soil can dry"
+    if flag.endswith("_flatline"):
+        metric = flag.removesuffix("_flatline")
+        return f"{metric.replace('_', ' ')} stuck at {values[metric]} for {_stuck_run()} readings in a row"
     metric = flag.removesuffix("_out_of_range")
     return f"{metric.replace('_', ' ')} reading {values[metric]} is out of range"
