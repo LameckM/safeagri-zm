@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app import db
 from app.main import app
 
-OWNER_EMAIL = "owner@safeagri.local"
+OWNER_EMAIL = "owner@example.com"
 OWNER_PASSWORD = "test-owner-password-123"
 
 @pytest.fixture
