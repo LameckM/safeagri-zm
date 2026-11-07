@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class RegisterIn(BaseModel):
@@ -31,3 +32,12 @@ class ReadingOut(BaseModel):
     field_id: int
     valid: bool
     flag: str | None = None
+
+
+class DemoFaultIn(BaseModel):
+    field_id: int
+    metric: Literal["humidity", "temperature", "soil_moisture"]
+    scenario: Literal["low", "high", "flatline"] = "high"
+
+class DemoFaultClearIn(BaseModel):
+    field_id: int
