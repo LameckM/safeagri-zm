@@ -1,18 +1,17 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import logging
 import os
-import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import auth
 from .db import get_conn, init_db
 from .scheduler import run_schedule, sync_node_alerts
-from .schemas import FieldUpdate, LoginIn, ReadingIn, ReadingOut, RegisterIn
+from .schemas import FieldUpdate, ReadingIn, ReadingOut
 from .validation import check_reading_flags, check_trend_flags, describe_flag
 
 log = logging.getLogger("safeagri")
@@ -67,39 +66,12 @@ def utc_iso(dt: datetime | None = None) -> str:
     return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def current_user(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        payload = auth.decode_access_token(authorization.split(" ", 1)[1].strip())
-        user_id = int(payload["sub"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired access token")
-    with get_conn() as conn:
-        user = conn.execute(
-            """SELECT u.id, u.full_name, u.email, u.farm_id, u.role,
-                      f.name AS farm_name, f.location AS farm_location
-               FROM users u JOIN farms f ON f.id = u.farm_id WHERE u.id = ?""",
-            (user_id,),
-        ).fetchone()
-    if user is None or user["farm_id"] != payload.get("farm_id"):
-        raise HTTPException(status_code=401, detail="Account is no longer available")
-    return dict(user)
-
-
-def require_owner(user: dict = Depends(current_user)):
-    if user["role"] == "member":
-        raise HTTPException(status_code=403, detail="Only the farm owner can do this")
-    return user
-
-
-def require_owned_field(conn, field_id: int, farm_id: int):
-    field = conn.execute(
-        "SELECT * FROM fields WHERE id = ? AND farm_id = ?", (field_id, farm_id)
-    ).fetchone()
+def require_field(conn, field_id: int):
+    field = conn.execute("SELECT * FROM fields WHERE id = ?", (field_id,)).fetchone()
     if field is None:
         raise HTTPException(status_code=404, detail="Field not found")
     return field
+
 
 
 @app.get("/health")
@@ -107,155 +79,8 @@ def health():
     return {"status": "ok"}
 
 
-INVALID_INVITE = "Invalid or expired invite code"
-MAX_PENDING_INVITES = 20
-
-
-def find_usable_invite(conn, code: str | None, now_text: str):
-    if not code or not code.strip():
-        raise HTTPException(status_code=403, detail="An invite code is required to create an account")
-    invite = conn.execute(
-        "SELECT * FROM invites WHERE code_hash = ?", (auth.hash_invite_code(code),)
-    ).fetchone()
-    # One answer for unknown, used, revoked and expired, so a code cannot be probed.
-    if invite is None or invite["used_at"] is not None or invite["expires_at"] <= now_text:
-        raise HTTPException(status_code=403, detail=INVALID_INVITE)
-    return invite
-
-
-@app.post("/auth/register", status_code=201)
-def register(payload: RegisterIn):
-    now = utc_iso()
-    with get_conn() as conn:
-        existing_users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
-        invite = None
-        if existing_users == 0:
-            expected = os.getenv("SAFEAGRI_INITIAL_SETUP_KEY")
-            if not expected:
-                raise HTTPException(status_code=503, detail="Initial setup is disabled. Configure SAFEAGRI_INITIAL_SETUP_KEY first.")
-            if not payload.setup_key or not secrets.compare_digest(payload.setup_key, expected):
-                raise HTTPException(status_code=403, detail="A valid initial setup key is required")
-            if not payload.farm_name:
-                raise HTTPException(status_code=422, detail="A farm name is required for the first account")
-        else:
-            invite = find_usable_invite(conn, payload.invite_code, now)
-        # Checked before the invite is used up, so a typo'd email does not burn the code.
-        if conn.execute("SELECT id FROM users WHERE email = ?", (payload.email,)).fetchone():
-            raise HTTPException(status_code=409, detail="An account with this email already exists")
-
-        if invite is None:
-            farm_name, farm_location, role = payload.farm_name, payload.location, "farmer"
-            farm_cur = conn.execute(
-                "INSERT INTO farms (name, location, created_at) VALUES (?, ?, ?)",
-                (farm_name, farm_location, now),
-            )
-            farm_id = farm_cur.lastrowid
-            # The setup key authorizes the first account to adopt legacy demo data.
-            conn.execute("UPDATE fields SET farm_id = ? WHERE farm_id IS NULL", (farm_id,))
-        else:
-            farm_id, role = invite["farm_id"], "member"
-            farm = conn.execute("SELECT name, location FROM farms WHERE id = ?", (farm_id,)).fetchone()
-            farm_name, farm_location = farm["name"], farm["location"]
-
-        user_cur = conn.execute(
-            """INSERT INTO users (farm_id, full_name, email, password_hash, role, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (farm_id, payload.full_name, payload.email, auth.hash_password(payload.password), role, now),
-        )
-        if invite is not None:
-            # The WHERE clause makes this safe if two people submit the same code at once.
-            used = conn.execute(
-                "UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL",
-                (now, user_cur.lastrowid, invite["id"]),
-            )
-            if used.rowcount != 1:
-                raise HTTPException(status_code=403, detail=INVALID_INVITE)
-    user = {
-        "id": user_cur.lastrowid, "full_name": payload.full_name, "email": payload.email,
-        "farm_id": farm_id, "farm_name": farm_name,
-        "farm_location": farm_location, "role": role,
-    }
-    return {"access_token": auth.create_access_token(user["id"], farm_id), "token_type": "bearer", "user": user}
-
-
-@app.post("/farm/invites", status_code=201)
-def create_invite(response: Response, user: dict = Depends(require_owner)):
-    """Create a single-use code for someone joining this farm.
-
-    The code is returned once and only its hash is stored. It expires after
-    SAFEAGRI_INVITE_DAYS (default 7).
-    """
-    now = datetime.now(timezone.utc)
-    code = auth.generate_invite_code()
-    expires_at = utc_iso(now + timedelta(days=float(os.getenv("SAFEAGRI_INVITE_DAYS", "7"))))
-    with get_conn() as conn:
-        pending = conn.execute(
-            "SELECT COUNT(*) AS n FROM invites WHERE farm_id = ? AND used_at IS NULL AND expires_at > ?",
-            (user["farm_id"], utc_iso(now)),
-        ).fetchone()["n"]
-        if pending >= MAX_PENDING_INVITES:
-            raise HTTPException(status_code=409, detail="Too many pending invitations. Revoke one first.")
-        cur = conn.execute(
-            "INSERT INTO invites (farm_id, code_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-            (user["farm_id"], auth.hash_invite_code(code), user["id"], utc_iso(now), expires_at),
-        )
-    response.headers["Cache-Control"] = "no-store"
-    return {"id": cur.lastrowid, "invite_code": code, "expires_at": expires_at}
-
-
-@app.get("/farm/invites")
-def list_invites(user: dict = Depends(require_owner)):
-    now_text = utc_iso()
-    with get_conn() as conn:
-        rows = conn.execute(
-            """SELECT i.id, i.created_at, i.expires_at, i.used_at, u.full_name AS used_by_name
-               FROM invites i LEFT JOIN users u ON u.id = i.used_by
-               WHERE i.farm_id = ? ORDER BY i.id DESC LIMIT 50""",
-            (user["farm_id"],),
-        ).fetchall()
-    invites = []
-    for row in rows:
-        invite = dict(row)
-        invite["status"] = "used" if row["used_at"] else "expired" if row["expires_at"] <= now_text else "pending"
-        invites.append(invite)
-    return invites
-
-
-@app.delete("/farm/invites/{invite_id}", status_code=204)
-def revoke_invite(invite_id: int, user: dict = Depends(require_owner)):
-    with get_conn() as conn:
-        invite = conn.execute(
-            "SELECT id, used_at FROM invites WHERE id = ? AND farm_id = ?", (invite_id, user["farm_id"])
-        ).fetchone()
-        if invite is None:
-            raise HTTPException(status_code=404, detail="Invitation not found")
-        if invite["used_at"] is not None:
-            raise HTTPException(status_code=409, detail="This invitation has already been used")
-        conn.execute("DELETE FROM invites WHERE id = ?", (invite_id,))
-
-
-@app.post("/auth/login")
-def login(payload: LoginIn):
-    with get_conn() as conn:
-        user = conn.execute(
-            """SELECT u.id, u.full_name, u.email, u.password_hash, u.farm_id, u.role,
-                      f.name AS farm_name, f.location AS farm_location
-               FROM users u JOIN farms f ON f.id = u.farm_id WHERE u.email = ?""",
-            (payload.email,),
-        ).fetchone()
-    if user is None or not auth.verify_password(payload.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
-    public_user = {k: user[k] for k in ("id", "full_name", "email", "farm_id", "farm_name", "farm_location", "role")}
-    return {"access_token": auth.create_access_token(user["id"], user["farm_id"]), "token_type": "bearer", "user": public_user}
-
-
-@app.get("/auth/me")
-def get_me(user: dict = Depends(current_user)):
-    return user
-
-
 # Never SELECT * from fields in a response: node_key_hash must not leave the server.
-PUBLIC_FIELD_COLUMNS = "id, farm_id, name, node_id, crop, (node_key_hash IS NOT NULL) AS has_node_key"
+PUBLIC_FIELD_COLUMNS = "id, name, node_id, crop, (node_key_hash IS NOT NULL) AS has_node_key"
 
 
 def public_field(row) -> dict:
@@ -265,39 +90,36 @@ def public_field(row) -> dict:
 
 
 @app.get("/fields")
-def list_fields(user: dict = Depends(current_user)):
+def list_fields():
     with get_conn() as conn:
-        rows = conn.execute(
-            f"SELECT {PUBLIC_FIELD_COLUMNS} FROM fields WHERE farm_id = ? ORDER BY id", (user["farm_id"],)
-        ).fetchall()
+        rows = conn.execute(f"SELECT {PUBLIC_FIELD_COLUMNS} FROM fields ORDER BY id").fetchall()
     return [public_field(r) for r in rows]
 
 
 @app.post("/fields/{field_id}/node-key")
-def issue_node_key(field_id: int, response: Response, user: dict = Depends(require_owner)):
+def issue_node_key(field_id: int, response: Response):
     """Issue (or rotate) the credential a sensor node sends in the X-Node-Key header.
 
-    Owner only: rotating a key cuts the device off until it is reflashed, so a
-    team member must not be able to do it. The key is returned once and only its
-    hash is stored. Issuing a new key immediately stops the previous one.
+    The key is returned once and only its hash is stored. Issuing a new key
+    immediately stops the previous one.
     """
     key = auth.generate_node_key()
     with get_conn() as conn:
-        field = require_owned_field(conn, field_id, user["farm_id"])
+        field = require_field(conn, field_id)
         conn.execute("UPDATE fields SET node_key_hash = ? WHERE id = ?", (auth.hash_node_key(key), field_id))
     response.headers["Cache-Control"] = "no-store"
     return {"field_id": field_id, "node_id": field["node_id"], "node_key": key}
 
 
 @app.patch("/fields/{field_id}")
-def update_field(field_id: int, payload: FieldUpdate, user: dict = Depends(require_owner)):
+def update_field(field_id: int, payload: FieldUpdate):
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="No field changes supplied")
     assignments = ", ".join(f"{key} = ?" for key in changes)
     with get_conn() as conn:
-        require_owned_field(conn, field_id, user["farm_id"])
-        conn.execute(f"UPDATE fields SET {assignments} WHERE id = ? AND farm_id = ?", [*changes.values(), field_id, user["farm_id"]])
+        require_field(conn, field_id)
+        conn.execute(f"UPDATE fields SET {assignments} WHERE id = ?", [*changes.values(), field_id])
         row = conn.execute(f"SELECT {PUBLIC_FIELD_COLUMNS} FROM fields WHERE id = ?", (field_id,)).fetchone()
     return public_field(row)
 
@@ -356,9 +178,9 @@ def create_reading(payload: ReadingIn, x_node_key: str | None = Header(default=N
 
 
 @app.get("/readings")
-def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=1000), include_invalid: bool = False, user: dict = Depends(current_user)):
-    sql = "SELECT r.* FROM readings r JOIN fields f ON f.id = r.field_id WHERE f.farm_id = ?"
-    params: list = [user["farm_id"]]
+def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=1000), include_invalid: bool = False):
+    sql = "SELECT r.* FROM readings r"
+    params: list = []
     if field_id is not None:
         sql += " AND r.field_id = ?"
         params.append(field_id)
@@ -372,7 +194,7 @@ def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=
 
 
 @app.get("/latest")
-def latest_per_field(user: dict = Depends(current_user)):
+def latest_per_field():
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT f.id AS field_id, f.name AS field_name,
@@ -382,40 +204,39 @@ def latest_per_field(user: dict = Depends(current_user)):
                       (SELECT x.valid FROM readings x WHERE x.field_id = f.id ORDER BY x.received_at DESC, x.id DESC LIMIT 1) AS last_packet_valid
                FROM fields f
                LEFT JOIN readings r ON r.id = (SELECT MAX(v.id) FROM readings v WHERE v.field_id = f.id AND v.valid = 1)
-               WHERE f.farm_id = ? ORDER BY f.id""",
-            (user["farm_id"],),
+               ORDER BY f.id""",
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 @app.post("/alerts/sync")
-def synchronize_alerts(user: dict = Depends(current_user)):
-    sync_node_alerts(user["farm_id"])
+def synchronize_alerts():
+    sync_node_alerts()
     return {"status": "synced"}
 
 
 @app.get("/alerts")
-def list_alerts(resolved: bool = False, user: dict = Depends(current_user)):
+def list_alerts(resolved: bool = False):
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT a.*, f.name AS field_name FROM alerts a JOIN fields f ON f.id = a.field_id
-               WHERE a.resolved = ? AND f.farm_id = ? ORDER BY a.id DESC""",
-            (int(resolved), user["farm_id"]),
+               WHERE a.resolved = ? ORDER BY a.id DESC""",
+            (int(resolved),)
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 @app.post("/schedule/run")
-def schedule_run(user: dict = Depends(current_user)):
-    return run_schedule(user["farm_id"])
+def schedule_run():
+    return run_schedule()
 
 
 @app.get("/schedule/events")
-def schedule_events(limit: int = Query(50, ge=1, le=500), user: dict = Depends(current_user)):
+def schedule_events(limit: int = Query(50, ge=1, le=500)):
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT e.*, f.name AS field_name FROM irrigation_events e JOIN fields f ON f.id = e.field_id
-               WHERE f.farm_id = ? ORDER BY e.id DESC LIMIT ?""",
-            (user["farm_id"], limit),
+               ORDER BY e.id DESC LIMIT ?""",
+            (limit,)
         ).fetchall()
     return [dict(r) for r in rows]
