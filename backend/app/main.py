@@ -179,10 +179,10 @@ def create_reading(payload: ReadingIn, x_node_key: str | None = Header(default=N
 
 @app.get("/readings")
 def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=1000), include_invalid: bool = False):
-    sql = "SELECT r.* FROM readings r"
+    sql = "SELECT r.* FROM readings r WHERE 1 = 1"
     params: list = []
     if field_id is not None:
-        sql += " WHERE r.field_id = ?"
+        sql += " AND r.field_id = ?"
         params.append(field_id)
     if not include_invalid:
         sql += " AND r.valid = 1"
