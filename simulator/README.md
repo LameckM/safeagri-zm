@@ -79,3 +79,25 @@ python simulate.py --fast --hours 1
 ```
 
 Configure the assumed flow with `SAFEAGRI_SIMULATED_FLOW_LPM`. This is an illustrative estimate, not a measured flow rate. The dashboard shows seven-day totals, daily consumption, daily average, and field comparison. The backend scheduler must be running and node keys provisioned.
+
+## Simulated water usage
+
+Water volume is estimated from each automatic irrigation OPEN event. The default assumed flow is 12 litres per minute; the simulator records `duration_min × flow rate` once per event and raises the field's simulated soil moisture after the pulse. Event IDs are unique in the database, so restarting the simulator will not count the same irrigation event twice.
+
+For a quick test, set a short backend scheduler interval **before starting the backend**:
+
+```powershell
+$env:SAFEAGRI_SCHEDULE_SECONDS = "5"
+$env:SAFEAGRI_SIMULATED_FLOW_LPM = "12"
+cd backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+In another terminal:
+
+```powershell
+cd simulator
+python simulate.py --fast --hours 2
+```
+
+Configure the assumed flow with `SAFEAGRI_SIMULATED_FLOW_LPM`. This is an illustrative estimate, not a measured flow rate. The dashboard shows seven-day totals, daily consumption, daily average, and field comparison. The backend scheduler must be running and node keys provisioned.
