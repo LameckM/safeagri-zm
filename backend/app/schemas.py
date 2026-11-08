@@ -30,3 +30,4 @@ class WaterUsageIn(BaseModel):
     liters: float = Field(ge=0, le=100000, allow_inf_nan=False)
     timestamp: datetime | None = None
     source: str = Field(default="simulated", pattern="^(simulated|meter)$")
+    irrigation_event_id: int | None = Field(default=None, ge=1)
