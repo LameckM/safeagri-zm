@@ -68,3 +68,14 @@ Set `SAFEAGRI_API_URL` if the backend is not at `http://localhost:8000`, for exa
 ```powershell
 $env:SAFEAGRI_API_URL = "http://192.168.1.20:8000"
 ```
+
+## Simulated water usage
+
+Water volume is estimated from each automatic irrigation OPEN event. The default assumed flow is 12 litres per minute; the simulator records `duration_min × flow rate` once per event and raises the field's simulated soil moisture after the pulse.
+
+```powershell
+$env:SAFEAGRI_SIMULATED_FLOW_LPM = "12"
+python simulate.py --fast --hours 1
+```
+
+Configure the assumed flow with `SAFEAGRI_SIMULATED_FLOW_LPM`. This is an illustrative estimate, not a measured flow rate. The dashboard shows seven-day totals, daily consumption, daily average, and field comparison. The backend scheduler must be running and node keys provisioned.
