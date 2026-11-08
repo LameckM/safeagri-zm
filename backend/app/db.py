@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS water_usage_readings (
     liters REAL NOT NULL CHECK (liters >= 0),
     recorded_at TEXT NOT NULL,
     received_at TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT 'simulated'
+    source TEXT NOT NULL DEFAULT 'simulated',
+    irrigation_event_id INTEGER REFERENCES irrigation_events(id)
 );
 CREATE INDEX IF NOT EXISTS idx_water_usage_field_time
     ON water_usage_readings(field_id, recorded_at DESC);
@@ -130,6 +131,10 @@ def _migrate_existing_database(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE fields ADD COLUMN farm_id INTEGER REFERENCES farms(id)")
     if "node_key_hash" not in columns:
         conn.execute("ALTER TABLE fields ADD COLUMN node_key_hash TEXT")
+    usage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(water_usage_readings)")}
+    if "irrigation_event_id" not in usage_columns:
+        conn.execute("ALTER TABLE water_usage_readings ADD COLUMN irrigation_event_id INTEGER REFERENCES irrigation_events(id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_water_usage_event ON water_usage_readings(irrigation_event_id) WHERE irrigation_event_id IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_fields_farm ON fields(farm_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id)")
 
