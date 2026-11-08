@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS irrigation_events (
     duration_min INTEGER,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS water_usage_readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    field_id INTEGER NOT NULL REFERENCES fields(id),
+    liters REAL NOT NULL CHECK (liters >= 0),
+    recorded_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'simulated'
+);
+CREATE INDEX IF NOT EXISTS idx_water_usage_field_time
+    ON water_usage_readings(field_id, recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_users_farm ON users(farm_id);
 """
 
