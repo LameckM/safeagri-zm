@@ -205,13 +205,29 @@ def create_water_usage(payload: WaterUsageIn, x_node_key: str | None = Header(de
         stored_hash = field["node_key_hash"] if field else None
         if not auth.node_key_matches(x_node_key, stored_hash):
             raise HTTPException(status_code=401, detail="Invalid node credentials")
-        cur = conn.execute(
-            """INSERT INTO water_usage_readings
-               (field_id, liters, recorded_at, received_at, source)
-               VALUES (?, ?, ?, ?, ?)""",
-            (field["id"], payload.liters, recorded_at, received_at, payload.source),
+        if payload.irrigation_event_id is not None:
+            event = conn.execute(
+                "SELECT field_id, action FROM irrigation_events WHERE id = ?",
+                (payload.irrigation_event_id,),
+            ).fetchone()
+            if event is None or event["field_id"] != field["id"] or event["action"] != "open":
+                raise HTTPException(status_code=422, detail="Irrigation event does not match this node")
+        conn.execute(
+            """INSERT OR IGNORE INTO water_usage_readings
+               (field_id, liters, recorded_at, received_at, source, irrigation_event_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (field["id"], payload.liters, recorded_at, received_at, payload.source, payload.irrigation_event_id),
         )
-    return {"id": cur.lastrowid, "field_id": field["id"], "liters": payload.liters, "recorded_at": recorded_at}
+        if payload.irrigation_event_id is not None:
+            saved = conn.execute(
+                "SELECT id, liters, recorded_at FROM water_usage_readings WHERE irrigation_event_id = ?",
+                (payload.irrigation_event_id,),
+            ).fetchone()
+        else:
+            saved = conn.execute(
+                "SELECT id, liters, recorded_at FROM water_usage_readings WHERE id = last_insert_rowid()"
+            ).fetchone()
+    return {"id": saved["id"], "field_id": field["id"], "liters": saved["liters"], "recorded_at": saved["recorded_at"]}
 
 
 @app.get("/water-usage")
