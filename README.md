@@ -104,7 +104,8 @@ Sensor readings are different: each node must send its own `X-Node-Key` header. 
 
 ## Monitoring and irrigation rules
 
-- The dashboard refreshes readings, alerts, and irrigation events every 10 seconds.
+- The dashboard refreshes readings, alerts, irrigation events, and the last seven days of water-use history every 10 seconds.
+- The simulator records estimated litres for each automatic irrigation OPEN event using `SAFEAGRI_SIMULATED_FLOW_LPM` (default 12 L/min); these are simulated volumes, not physical meter readings.
 - The backend evaluates all fields immediately when it starts, then repeats automatically every `SAFEAGRI_SCHEDULE_SECONDS` (default 60 seconds); **Check irrigation now** is an optional manual evaluation.
 - Out-of-range, flatline, and implausible soil-moisture changes are marked invalid and excluded from irrigation decisions.
 - Stale nodes are marked offline and are not irrigated using stale values.
@@ -120,5 +121,6 @@ Environment variables:
 | `SAFEAGRI_STALE_MINUTES` | `15` | Minutes without a packet before a node is offline |
 | `SAFEAGRI_STUCK_RUN` | `4` | Consecutive identical soil-moisture readings before flatline detection |
 | `SAFEAGRI_DROP_LIMIT` | `2.2` | Maximum plausible soil-moisture fall between readings |
+| `SAFEAGRI_SIMULATED_FLOW_LPM` | `12` | Simulated flow rate used to estimate litres per irrigation event |
 
 Simulated readings are test data, not field measurements. Validate thresholds with the real ESP32 sensors before using the system to guide actual irrigation.
