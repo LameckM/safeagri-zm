@@ -431,3 +431,34 @@ button { min-height: 44px; touch-action: manipulation; }
 .field-management__buttons { display: flex !important; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .field-management code, .invite-reveal code { padding: 1px 5px; background: #fffdf7; border: 1px solid var(--line); border-radius: 3px; font-size: 12px; }
 .field-management .invite-reveal { margin-bottom: 14px; }
+
+/* Water usage analytics */
+.water-panel { margin: 0 0 20px; }
+.water-panel__heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.water-panel__heading h2 { margin-bottom: 4px; }
+.water-panel__heading p, .water-panel__note { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
+.water-panel__unit { color: var(--ink-muted); font-size: 12px; font-weight: 700; }
+.water-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 18px 0 22px; }
+.water-kpis > div { display: grid; gap: 5px; padding: 12px; background: var(--bg); border-radius: 5px; min-width: 0; }
+.water-kpis span { color: var(--ink-muted); font-size: 11px; }
+.water-kpis strong { font-family: var(--font-display); font-size: clamp(17px, 3vw, 25px); overflow-wrap: anywhere; }
+.water-chart-block { margin-top: 18px; }
+.water-chart-block h3 { margin: 0 0 12px; font-family: var(--font-display); font-size: 15px; }
+.water-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; min-height: 170px; align-items: end; }
+.water-bar-column { display: grid; grid-template-rows: 18px 120px 20px; gap: 5px; justify-items: center; min-width: 0; }
+.water-bar-value, .water-bar-label { font-size: 10px; color: var(--ink-muted); white-space: nowrap; }
+.water-bar-track { width: min(100%, 34px); height: 120px; display: flex; align-items: end; background: var(--bg); border-radius: 4px 4px 0 0; overflow: hidden; }
+.water-bar { width: 100%; min-height: 0; background: var(--blue); border-radius: 4px 4px 0 0; }
+.water-field-list { display: grid; gap: 12px; }
+.water-field-row__label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-size: 12px; }
+.water-field-row__label span { color: var(--ink-muted); }
+.water-field-track { height: 9px; background: var(--bg); border-radius: 10px; overflow: hidden; }
+.water-field-fill { height: 100%; background: var(--green); border-radius: inherit; }
+.water-panel__note { margin-top: 18px; }
+@media (max-width: 420px) {
+  .water-kpis { gap: 6px; }
+  .water-kpis > div { padding: 9px 7px; }
+  .water-kpis span { font-size: 10px; }
+  .water-bars { gap: 3px; }
+  .water-bar-value, .water-bar-label { font-size: 9px; }
+}
