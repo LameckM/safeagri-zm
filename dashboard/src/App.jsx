@@ -5,6 +5,7 @@ import StatusPill from "./components/StatusPill.jsx";
 import AlertsPanel from "./components/AlertsPanel.jsx";
 import IrrigationLog from "./components/IrrigationLog.jsx";
 import FieldManagement from "./components/FieldManagement.jsx";
+import WaterUsageChart from "./components/WaterUsageChart.jsx";
 
 const POLL_MS = 10_000;
 
@@ -13,6 +14,7 @@ export default function App() {
   const [readingsByField, setReadingsByField] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [events, setEvents] = useState([]);
+  const [waterUsage, setWaterUsage] = useState([]);
   const [connectionError, setConnectionError] = useState(null);
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState(null);
@@ -20,8 +22,8 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       await api.syncAlerts();
-      const [fieldList, latest, alertList, eventList] = await Promise.all([
-        api.fields(), api.latest(), api.alerts(), api.scheduleEvents(),
+      const [fieldList, latest, alertList, eventList, usageList] = await Promise.all([
+        api.fields(), api.latest(), api.alerts(), api.scheduleEvents(), api.waterUsage(7),
       ]);
       setFields(fieldList);
       const byField = {};
@@ -29,6 +31,7 @@ export default function App() {
       setReadingsByField(byField);
       setAlerts(alertList);
       setEvents(eventList);
+      setWaterUsage(usageList);
       setConnectionError(null);
     } catch (err) {
       setConnectionError(err.message || "Unable to connect to the SafeAgri API.");
@@ -85,6 +88,8 @@ export default function App() {
         </button>
         {lastChecked && <span className="actions__note">Last check at {lastChecked.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
       </div>
+
+      <WaterUsageChart records={waterUsage} />
 
       <div className="panel-grid">
         <AlertsPanel alerts={alerts} />
