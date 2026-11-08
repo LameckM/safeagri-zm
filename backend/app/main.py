@@ -18,13 +18,14 @@ log = logging.getLogger("safeagri")
 
 
 async def schedule_loop(interval: float):
-    """Evaluate every field on a timer so irrigation decisions never wait for a click."""
+    """Evaluate all fields immediately, then repeat without dashboard interaction."""
     while True:
-        await asyncio.sleep(interval)
         try:
+            # Run once at startup; do not leave fields waiting for the first timer tick.
             await asyncio.to_thread(run_schedule)
         except Exception:
             log.exception("Scheduled irrigation check failed")
+        await asyncio.sleep(interval)
 
 
 @asynccontextmanager
