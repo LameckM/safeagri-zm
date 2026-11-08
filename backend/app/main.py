@@ -182,7 +182,7 @@ def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=
     sql = "SELECT r.* FROM readings r"
     params: list = []
     if field_id is not None:
-        sql += " AND r.field_id = ?"
+        sql += " WHERE r.field_id = ?"
         params.append(field_id)
     if not include_invalid:
         sql += " AND r.valid = 1"
