@@ -35,6 +35,9 @@ log = logging.getLogger("simulator")
 
 API_BASE = os.getenv("SAFEAGRI_API_URL", "http://localhost:8000").rstrip("/")
 READINGS_URL = f"{API_BASE}/readings"
+WATER_USAGE_URL = f"{API_BASE}/water-usage"
+SCHEDULE_EVENTS_URL = f"{API_BASE}/schedule/events"
+SIMULATED_FLOW_LPM = float(os.getenv("SAFEAGRI_SIMULATED_FLOW_LPM", "12"))
 KEYS_PATH = Path(os.getenv("SAFEAGRI_NODE_KEYS_FILE", Path(__file__).parent / "node_keys.json"))
 NODE_IDS = ["node-01", "node-02", "node-03", "node-04"]
 INTERVAL_MIN = 5
@@ -135,6 +138,42 @@ def load_node_keys(path=KEYS_PATH):
         return {}
 
 
+def post_water_usage(client, node_id, liters, node_key=None):
+    headers = {"X-Node-Key": node_key} if node_key else {}
+    try:
+        response = client.post(WATER_USAGE_URL, json={"node_id": node_id, "liters": round(liters, 2), "source": "simulated"}, headers=headers, timeout=5)
+        if response.status_code != 201:
+            log.warning("Water usage rejected for %s: %s %s", node_id, response.status_code, response.text)
+        else:
+            log.info("WATER USAGE %s: %.2f L (estimated at %.2f L/min)", node_id, liters, SIMULATED_FLOW_LPM)
+    except httpx.HTTPError as exc:
+        log.error("Water usage API connection failed: %s", exc)
+
+
+def record_new_irrigation_events(client, fields_by_node, node_keys, processed_event_ids):
+    """Convert each new scheduler OPEN event into one simulated water-volume record."""
+    try:
+        response = client.get(SCHEDULE_EVENTS_URL, params={"limit": 100}, timeout=5)
+        response.raise_for_status()
+        events = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("Could not read irrigation events for water simulation: %s", exc)
+        return
+
+    for event in reversed(events):
+        event_id = event["id"]
+        if event_id in processed_event_ids or event.get("action") != "open":
+            continue
+        processed_event_ids.add(event_id)
+        duration = max(0, float(event.get("duration_min") or 0))
+        liters = duration * SIMULATED_FLOW_LPM
+        node_id = next((node for node, item in fields_by_node.items() if item["id"] == event["field_id"]), None)
+        if node_id is None or liters <= 0:
+            continue
+        post_water_usage(client, node_id, liters, node_keys.get(node_id))
+        fields_by_node[node_id]["state"].moisture = max(fields_by_node[node_id]["state"].moisture, 45.0)
+
+
 def post_reading(client, reading, node_key=None):
     headers = {"X-Node-Key": node_key} if node_key else {}
     try:
@@ -170,6 +209,18 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None, node_
     held_values = {}
     delay = 0.05 if fast else INTERVAL_MIN * 60
     offline_armed = set()
+    processed_event_ids = set()
+    try:
+        field_response = httpx.get(f"{API_BASE}/fields", timeout=5)
+        field_response.raise_for_status()
+        field_rows = field_response.json()
+        fields_by_node = {
+            row["node_id"]: {"id": row["id"], "state": next(f for f in fields if f.node_id == row["node_id"])}
+            for row in field_rows
+        }
+    except (httpx.HTTPError, ValueError, StopIteration) as exc:
+        log.error("Could not load field mapping for water simulation: %s", exc)
+        return
 
     log.info(
         "Starting simulation scenario=%s sensor=%s target=%s fast=%s interval=%ss",
@@ -203,6 +254,7 @@ def run(fast=False, hours=None, sensor=None, scenario="normal", node=None, node_
                 if reading is not None:
                     post_reading(client, reading, node_keys.get(field.node_id))
 
+            record_new_irrigation_events(client, fields_by_node, node_keys, processed_event_ids)
             moment += timedelta(minutes=INTERVAL_MIN)
             time.sleep(delay)
 
