@@ -26,5 +26,6 @@ export const api = {
   alerts: () => request("/alerts"),
   syncAlerts: () => request("/alerts/sync", { method: "POST" }),
   scheduleEvents: () => request("/schedule/events"),
+  waterUsage: (days = 7) => request(`/water-usage?days=${days}`),
   runSchedule: () => request("/schedule/run", { method: "POST" }),
 };
