@@ -40,6 +40,16 @@ def hash_node_key(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+def generate_invite_code() -> str:
+    """A single-use code a farm owner hands to someone joining the farm."""
+    return "inv_" + secrets.token_urlsafe(18)
+
+
+def hash_invite_code(code: str) -> str:
+    # Same reasoning as node keys: the code is random, so a fast hash is enough.
+    return hashlib.sha256(code.strip().encode()).hexdigest()
+
+
 _UNUSED_HASH = hash_node_key("no key issued")
 
 

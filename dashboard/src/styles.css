@@ -369,7 +369,7 @@ button { min-height: 44px; touch-action: manipulation; }
   .header-actions { width: 100%; justify-content: flex-start; }
 }
 
-.field-management { margin-bottom: 24px; }
+.field-management { margin-top: 20px; margin-bottom: 4px; }
 .field-management__heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
 .field-management__heading h2 { margin-bottom: 4px; }
 .field-management__heading p { margin: 0; color: var(--ink-muted); font-size: 13px; }
@@ -392,3 +392,42 @@ button { min-height: 44px; touch-action: manipulation; }
   .field-management__form { grid-template-columns: 1fr; }
   .field-management__heading { align-items: flex-start; }
 }
+
+.auth-switch--small { margin-top: 6px; font-size: 12px; }
+
+.team-panel { margin-top: 20px; }
+.team-panel__heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.team-panel__heading h2 { margin-bottom: 4px; }
+.team-panel__heading p { margin: 0; color: var(--ink-muted); font-size: 13px; line-height: 1.5; }
+.team-panel__create, .invite-list button, .copy-field button, .invite-reveal__done {
+  min-height: 40px; padding: 8px 13px; border: 1px solid var(--line);
+  border-radius: 5px; background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.team-panel__create { background: var(--green); border-color: var(--green); color: #fff; white-space: nowrap; }
+.team-panel__create:disabled { opacity: .6; cursor: wait; }
+
+.invite-reveal { display: grid; gap: 12px; margin-bottom: 16px; padding: 14px; background: var(--green-tint); border: 1px solid var(--line); border-radius: 6px; }
+.invite-reveal p { margin: 0; font-size: 13px; line-height: 1.5; }
+.invite-reveal__done { justify-self: start; }
+.copy-field { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+.copy-field label { display: grid; gap: 6px; font-size: 12px; font-weight: 600; min-width: 0; }
+.copy-field input { min-width: 0; min-height: 42px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 5px; background: #fffdf7; font: inherit; font-size: 13px; }
+.copy-field__note { grid-column: 1 / -1; color: var(--ink-muted); font-size: 12px; }
+
+.invite-list { list-style: none; margin: 0; padding: 0; }
+.invite-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.invite-list li > div { display: grid; gap: 4px; min-width: 0; }
+.invite-list__meta { color: var(--ink-muted); font-size: 12px; overflow-wrap: anywhere; }
+.invite-status { justify-self: start; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.invite-status--pending { background: var(--blue-tint); color: var(--blue); }
+.invite-status--used { background: var(--green-tint); color: var(--green); }
+.invite-status--expired { background: var(--amber-tint); color: var(--amber); }
+@media (max-width: 640px) {
+  .team-panel__heading { flex-direction: column; }
+  .team-panel__create { width: 100%; }
+}
+
+.field-management__buttons { display: flex !important; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.field-management code, .invite-reveal code { padding: 1px 5px; background: #fffdf7; border: 1px solid var(--line); border-radius: 3px; font-size: 12px; }
+.field-management .invite-reveal { margin-bottom: 14px; }

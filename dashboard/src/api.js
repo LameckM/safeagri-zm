@@ -47,9 +47,13 @@ export const api = {
   me: () => request("/auth/me"),
   fields: () => request("/fields"),
   updateField: (fieldId, payload) => request(`/fields/${fieldId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  issueNodeKey: (fieldId) => request(`/fields/${fieldId}/node-key`, { method: "POST" }),
   latest: () => request("/latest"),
   alerts: () => request("/alerts"),
   syncAlerts: () => request("/alerts/sync", { method: "POST" }),
+  invites: () => request("/farm/invites"),
+  createInvite: () => request("/farm/invites", { method: "POST" }),
+  revokeInvite: (inviteId) => request(`/farm/invites/${inviteId}`, { method: "DELETE" }),
   scheduleEvents: () => request("/schedule/events"),
   runSchedule: () => request("/schedule/run", { method: "POST" }),
 };

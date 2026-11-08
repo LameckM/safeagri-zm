@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import secrets
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SafeAgri Smart Irrigation API", lifespan=lifespan)
 LOCAL_DASHBOARD_ORIGIN = (
-    r"^https?://(localhost|127\.0\.1|"
+    r"^https?://(localhost|127\.0\.0\.1|"
     r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
     r"192\.168\.\d{1,3}\.\d{1,3}|"
     r"172\.(?:1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})"
@@ -87,6 +87,12 @@ def current_user(authorization: str | None = Header(default=None)):
     return dict(user)
 
 
+def require_owner(user: dict = Depends(current_user)):
+    if user["role"] == "member":
+        raise HTTPException(status_code=403, detail="Only the farm owner can do this")
+    return user
+
+
 def require_owned_field(conn, field_id: int, farm_id: int):
     field = conn.execute(
         "SELECT * FROM fields WHERE id = ? AND farm_id = ?", (field_id, farm_id)
@@ -101,38 +107,131 @@ def health():
     return {"status": "ok"}
 
 
+INVALID_INVITE = "Invalid or expired invite code"
+MAX_PENDING_INVITES = 20
+
+
+def find_usable_invite(conn, code: str | None, now_text: str):
+    if not code or not code.strip():
+        raise HTTPException(status_code=403, detail="An invite code is required to create an account")
+    invite = conn.execute(
+        "SELECT * FROM invites WHERE code_hash = ?", (auth.hash_invite_code(code),)
+    ).fetchone()
+    # One answer for unknown, used, revoked and expired, so a code cannot be probed.
+    if invite is None or invite["used_at"] is not None or invite["expires_at"] <= now_text:
+        raise HTTPException(status_code=403, detail=INVALID_INVITE)
+    return invite
+
+
 @app.post("/auth/register", status_code=201)
 def register(payload: RegisterIn):
     now = utc_iso()
     with get_conn() as conn:
         existing_users = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        invite = None
         if existing_users == 0:
             expected = os.getenv("SAFEAGRI_INITIAL_SETUP_KEY")
             if not expected:
                 raise HTTPException(status_code=503, detail="Initial setup is disabled. Configure SAFEAGRI_INITIAL_SETUP_KEY first.")
             if not payload.setup_key or not secrets.compare_digest(payload.setup_key, expected):
                 raise HTTPException(status_code=403, detail="A valid initial setup key is required")
+            if not payload.farm_name:
+                raise HTTPException(status_code=422, detail="A farm name is required for the first account")
+        else:
+            invite = find_usable_invite(conn, payload.invite_code, now)
+        # Checked before the invite is used up, so a typo'd email does not burn the code.
         if conn.execute("SELECT id FROM users WHERE email = ?", (payload.email,)).fetchone():
             raise HTTPException(status_code=409, detail="An account with this email already exists")
-        farm_cur = conn.execute(
-            "INSERT INTO farms (name, location, created_at) VALUES (?, ?, ?)",
-            (payload.farm_name, payload.location, now),
-        )
-        farm_id = farm_cur.lastrowid
-        if existing_users == 0:
+
+        if invite is None:
+            farm_name, farm_location, role = payload.farm_name, payload.location, "farmer"
+            farm_cur = conn.execute(
+                "INSERT INTO farms (name, location, created_at) VALUES (?, ?, ?)",
+                (farm_name, farm_location, now),
+            )
+            farm_id = farm_cur.lastrowid
             # The setup key authorizes the first account to adopt legacy demo data.
             conn.execute("UPDATE fields SET farm_id = ? WHERE farm_id IS NULL", (farm_id,))
+        else:
+            farm_id, role = invite["farm_id"], "member"
+            farm = conn.execute("SELECT name, location FROM farms WHERE id = ?", (farm_id,)).fetchone()
+            farm_name, farm_location = farm["name"], farm["location"]
+
         user_cur = conn.execute(
             """INSERT INTO users (farm_id, full_name, email, password_hash, role, created_at)
-               VALUES (?, ?, ?, ?, 'farmer', ?)""",
-            (farm_id, payload.full_name, payload.email, auth.hash_password(payload.password), now),
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (farm_id, payload.full_name, payload.email, auth.hash_password(payload.password), role, now),
         )
+        if invite is not None:
+            # The WHERE clause makes this safe if two people submit the same code at once.
+            used = conn.execute(
+                "UPDATE invites SET used_at = ?, used_by = ? WHERE id = ? AND used_at IS NULL",
+                (now, user_cur.lastrowid, invite["id"]),
+            )
+            if used.rowcount != 1:
+                raise HTTPException(status_code=403, detail=INVALID_INVITE)
     user = {
         "id": user_cur.lastrowid, "full_name": payload.full_name, "email": payload.email,
-        "farm_id": farm_id, "farm_name": payload.farm_name,
-        "farm_location": payload.location, "role": "farmer",
+        "farm_id": farm_id, "farm_name": farm_name,
+        "farm_location": farm_location, "role": role,
     }
     return {"access_token": auth.create_access_token(user["id"], farm_id), "token_type": "bearer", "user": user}
+
+
+@app.post("/farm/invites", status_code=201)
+def create_invite(response: Response, user: dict = Depends(require_owner)):
+    """Create a single-use code for someone joining this farm.
+
+    The code is returned once and only its hash is stored. It expires after
+    SAFEAGRI_INVITE_DAYS (default 7).
+    """
+    now = datetime.now(timezone.utc)
+    code = auth.generate_invite_code()
+    expires_at = utc_iso(now + timedelta(days=float(os.getenv("SAFEAGRI_INVITE_DAYS", "7"))))
+    with get_conn() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) AS n FROM invites WHERE farm_id = ? AND used_at IS NULL AND expires_at > ?",
+            (user["farm_id"], utc_iso(now)),
+        ).fetchone()["n"]
+        if pending >= MAX_PENDING_INVITES:
+            raise HTTPException(status_code=409, detail="Too many pending invitations. Revoke one first.")
+        cur = conn.execute(
+            "INSERT INTO invites (farm_id, code_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+            (user["farm_id"], auth.hash_invite_code(code), user["id"], utc_iso(now), expires_at),
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {"id": cur.lastrowid, "invite_code": code, "expires_at": expires_at}
+
+
+@app.get("/farm/invites")
+def list_invites(user: dict = Depends(require_owner)):
+    now_text = utc_iso()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT i.id, i.created_at, i.expires_at, i.used_at, u.full_name AS used_by_name
+               FROM invites i LEFT JOIN users u ON u.id = i.used_by
+               WHERE i.farm_id = ? ORDER BY i.id DESC LIMIT 50""",
+            (user["farm_id"],),
+        ).fetchall()
+    invites = []
+    for row in rows:
+        invite = dict(row)
+        invite["status"] = "used" if row["used_at"] else "expired" if row["expires_at"] <= now_text else "pending"
+        invites.append(invite)
+    return invites
+
+
+@app.delete("/farm/invites/{invite_id}", status_code=204)
+def revoke_invite(invite_id: int, user: dict = Depends(require_owner)):
+    with get_conn() as conn:
+        invite = conn.execute(
+            "SELECT id, used_at FROM invites WHERE id = ? AND farm_id = ?", (invite_id, user["farm_id"])
+        ).fetchone()
+        if invite is None:
+            raise HTTPException(status_code=404, detail="Invitation not found")
+        if invite["used_at"] is not None:
+            raise HTTPException(status_code=409, detail="This invitation has already been used")
+        conn.execute("DELETE FROM invites WHERE id = ?", (invite_id,))
 
 
 @app.post("/auth/login")
@@ -175,11 +274,12 @@ def list_fields(user: dict = Depends(current_user)):
 
 
 @app.post("/fields/{field_id}/node-key")
-def issue_node_key(field_id: int, response: Response, user: dict = Depends(current_user)):
+def issue_node_key(field_id: int, response: Response, user: dict = Depends(require_owner)):
     """Issue (or rotate) the credential a sensor node sends in the X-Node-Key header.
 
-    The key is returned once and only its hash is stored. Issuing a new key
-    immediately stops the previous one from working.
+    Owner only: rotating a key cuts the device off until it is reflashed, so a
+    team member must not be able to do it. The key is returned once and only its
+    hash is stored. Issuing a new key immediately stops the previous one.
     """
     key = auth.generate_node_key()
     with get_conn() as conn:
@@ -190,7 +290,7 @@ def issue_node_key(field_id: int, response: Response, user: dict = Depends(curre
 
 
 @app.patch("/fields/{field_id}")
-def update_field(field_id: int, payload: FieldUpdate, user: dict = Depends(current_user)):
+def update_field(field_id: int, payload: FieldUpdate, user: dict = Depends(require_owner)):
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="No field changes supplied")

@@ -90,17 +90,9 @@ def test_protected_endpoints_reject_missing_token(client):
         assert client.get(path).status_code == 401
 
 
-def test_second_farmer_cannot_see_first_farm_fields_or_data(client):
+def test_second_farmer_cannot_see_first_farm_fields_or_data(client, other_farm):
     client.post("/readings", json=GOOD)
-    second = client.post("/auth/register", json={
-        "full_name": "Second Farmer",
-        "email": "second@example.com",
-        "password": "another-password-123",
-        "farm_name": "Second Farm",
-        "location": "Ndola",
-    })
-    assert second.status_code == 201
-    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
+    client.headers.update(other_farm.headers)
     assert client.get("/fields").json() == []
     assert client.get("/latest").json() == []
     assert client.get("/readings").json() == []
@@ -113,16 +105,12 @@ def test_field_creation_is_disabled(client):
     assert response.status_code == 405
 
 
-def test_field_rename_is_farm_scoped(client):
+def test_field_rename_is_farm_scoped(client, other_farm):
     field_id = client.get("/fields").json()[0]["id"]
     updated = client.patch(f"/fields/{field_id}", json={"name": "Renamed Field"})
     assert updated.status_code == 200
     assert updated.json()["name"] == "Renamed Field"
-    second = client.post("/auth/register", json={
-        "full_name": "Second Farmer", "email": "second@example.com",
-        "password": "another-password-123", "farm_name": "Second Farm",
-    })
-    client.headers["Authorization"] = "Bearer " + second.json()["access_token"]
+    client.headers.update(other_farm.headers)
     assert client.patch(f"/fields/{field_id}", json={"name": "Stolen"}).status_code == 404
 
 

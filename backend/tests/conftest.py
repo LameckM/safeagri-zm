@@ -1,10 +1,11 @@
 """Shared fixtures. Test clients come with a registered farmer and a key per node."""
 import contextlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db
+from app import auth, db
 from app.main import app
 
 
@@ -62,3 +63,20 @@ def make_client(tmp_path, monkeypatch):
 def client(make_client):
     with make_client() as c:
         yield c
+
+
+@pytest.fixture
+def other_farm(client):
+    """A second farm with its own owner. Signup can no longer create one, so insert it."""
+    with db.get_conn() as conn:
+        farm_id = conn.execute(
+            "INSERT INTO farms (name, created_at) VALUES ('Other Farm', '2026-01-01T00:00:00.000+00:00')"
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO users (farm_id, full_name, email, password_hash, role, created_at)
+               VALUES (?, 'Other Farmer', 'other@example.com', ?, 'farmer', '2026-01-01T00:00:00.000+00:00')""",
+            (farm_id, auth.hash_password("other-password-123")),
+        )
+    login = client.post("/auth/login", json={"email": "other@example.com", "password": "other-password-123"})
+    assert login.status_code == 200, login.text
+    return SimpleNamespace(farm_id=farm_id, headers={"Authorization": "Bearer " + login.json()["access_token"]})

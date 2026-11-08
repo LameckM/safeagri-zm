@@ -38,7 +38,7 @@ On macOS/Linux, activate the environment with:
 source .venv/bin/activate
 ```
 
-The API initializes its SQLite database and seeds the four configured fields when it starts. The default database is created at `backend/data/irrigation.db`; keep this file if you need to preserve local readings.
+The API initializes its SQLite database and seeds the four configured fields when it starts. The default database is `backend/data/irrigation.db` next to the code, wherever you start the server from, and it is not committed to git. Keep this file if you need to preserve local readings. Set `DB_PATH` to use a different file.
 
 Check the API on the computer at [http://localhost:8000/health](http://localhost:8000/health) or open the interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
 
@@ -106,11 +106,26 @@ python -m pytest
 
 The tests use a temporary SQLite database; they do not need to overwrite the normal local database.
 
+## Accounts and team invites
+
+Two environment variables must be set before the backend starts:
+
+| Variable | Meaning |
+| --- | --- |
+| `SAFEAGRI_SECRET_KEY` | Long random secret used to sign login tokens. The server refuses to start without it. |
+| `SAFEAGRI_INITIAL_SETUP_KEY` | One-time key that authorizes the very first account. Needed only once. |
+
+The first account is created from the sign-in page with "Join a farm", then "First time installing SafeAgri? Set up the farm". It needs the setup key, creates the farm, and becomes its owner with the four configured fields.
+
+Nobody else can create an account on their own. The owner opens the dashboard, goes to the Team panel, and presses "Create invite". That gives a link and a code for one person, shown once, valid for 7 days (`SAFEAGRI_INVITE_DAYS` changes this). The invited person opens the link, or enters the code under "Join a farm", and joins the owner's farm as a team member with the same fields, alerts and history. Used, expired and revoked codes all get the same refusal.
+
+Team members can watch the dashboard and run an irrigation check. Only the owner can invite people, rename fields and issue sensor keys, because rotating a key cuts that sensor off until it is updated.
+
 ## Sensor node keys
 
 Every reading must carry the key of the node that sent it, in an `X-Node-Key` header. Without it anyone who can reach the API could post fake moisture values and steer irrigation decisions.
 
-A logged-in farmer issues a key with `POST /fields/{field_id}/node-key`. The response contains the key once and the server keeps only its hash, so write it into the device firmware straight away. Issuing a new key for a field immediately stops the old one working. `GET /fields` shows `has_node_key` for each field but never the key.
+The owner issues a key from the dashboard (Registered fields, then "Issue key"), by running `simulator/provision_keys.py`, or with `POST /fields/{field_id}/node-key`. The response contains the key once and the server keeps only its hash, so write it into the device firmware straight away. Issuing a new key for a field immediately stops the old one working. `GET /fields` shows `has_node_key` for each field but never the key.
 
 A device sends, for example:
 

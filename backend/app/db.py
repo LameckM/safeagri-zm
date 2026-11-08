@@ -4,7 +4,11 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(os.getenv("DB_PATH", "data/irrigation.db"))
+# Default to backend/data next to the code, not the current directory, so starting
+# uvicorn from the repo root or from backend/ always opens the same database.
+# An explicit DB_PATH is used exactly as given.
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "irrigation.db"
+DB_PATH = Path(os.getenv("DB_PATH") or DEFAULT_DB_PATH)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS farms (
@@ -23,6 +27,18 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'farmer',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id INTEGER NOT NULL REFERENCES farms(id),
+    code_hash TEXT NOT NULL UNIQUE,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    used_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_invites_farm ON invites(farm_id);
 
 CREATE TABLE IF NOT EXISTS fields (
     id INTEGER PRIMARY KEY,

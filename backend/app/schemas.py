@@ -5,9 +5,12 @@ class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=100)
     email: EmailStr
     password: str = Field(min_length=10, max_length=128)
-    farm_name: str = Field(min_length=2, max_length=120)
+    # Only the very first account names a farm (and needs the setup key). Everyone
+    # after that joins an existing farm with an invite code.
+    farm_name: str | None = Field(default=None, min_length=2, max_length=120)
     location: str | None = Field(default=None, max_length=160)
     setup_key: str | None = Field(default=None, max_length=256)
+    invite_code: str | None = Field(default=None, max_length=128)
 
 class LoginIn(BaseModel):
     email: EmailStr

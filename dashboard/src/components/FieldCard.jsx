@@ -61,11 +61,11 @@ export default function FieldCard({ field, reading, offline = false }) {
       <dl className="field-card__meta">
         <div>
           <dt>Temperature</dt>
-          <dd>{reading?.temperature !== undefined ? `${reading.temperature}°C` : "--"}</dd>
+          <dd>{reading?.temperature != null ? `${reading.temperature}°C` : "--"}</dd>
         </div>
         <div>
           <dt>Humidity</dt>
-          <dd>{reading?.humidity !== undefined ? `${reading.humidity}%` : "--"}</dd>
+          <dd>{reading?.humidity != null ? `${reading.humidity}%` : "--"}</dd>
         </div>
       </dl>
 
