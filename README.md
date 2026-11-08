@@ -105,7 +105,7 @@ Sensor readings are different: each node must send its own `X-Node-Key` header. 
 ## Monitoring and irrigation rules
 
 - The dashboard refreshes readings, alerts, and irrigation events every 10 seconds.
-- The backend evaluates fields automatically on a timer; **Check irrigation now** triggers an immediate evaluation.
+- The backend evaluates all fields immediately when it starts, then repeats automatically every `SAFEAGRI_SCHEDULE_SECONDS` (default 60 seconds); **Check irrigation now** is an optional manual evaluation.
 - Out-of-range, flatline, and implausible soil-moisture changes are marked invalid and excluded from irrigation decisions.
 - Stale nodes are marked offline and are not irrigated using stale values.
 - Dry-soil alerts clear when soil moisture recovers; offline alerts clear when a new packet arrives.
