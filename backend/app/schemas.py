@@ -22,3 +22,11 @@ class ReadingOut(BaseModel):
     field_id: int
     valid: bool
     flag: str | None = None
+
+
+class WaterUsageIn(BaseModel):
+    """A simulated/real flow-meter volume for one sensor node interval."""
+    node_id: str = Field(min_length=1, max_length=32)
+    liters: float = Field(ge=0, le=100000, allow_inf_nan=False)
+    timestamp: datetime | None = None
+    source: str = Field(default="simulated", pattern="^(simulated|meter)$")
