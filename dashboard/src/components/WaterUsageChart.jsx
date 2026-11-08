@@ -2,12 +2,10 @@ import React, { useMemo } from "react";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const formatLiters = (value) => `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} L`;
-
 function dayKey(value) {
   const date = new Date(value);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-
 function shortDay(key) {
   return new Date(`${key}T12:00:00`).toLocaleDateString([], { weekday: "short", day: "numeric" });
 }
@@ -15,10 +13,7 @@ function shortDay(key) {
 export default function WaterUsageChart({ records }) {
   const analysis = useMemo(() => {
     const now = new Date();
-    const days = Array.from({ length: 7 }, (_, index) => {
-      const date = new Date(now.getTime() - (6 - index) * DAY_MS);
-      return dayKey(date.toISOString());
-    });
+    const days = Array.from({ length: 7 }, (_, index) => dayKey(new Date(now.getTime() - (6 - index) * DAY_MS).toISOString()));
     const totalsByDay = Object.fromEntries(days.map((day) => [day, 0]));
     const byField = new Map();
     let total = 0;
@@ -31,29 +26,22 @@ export default function WaterUsageChart({ records }) {
     }
     const fieldTotals = [...byField.entries()].map(([name, liters]) => ({ name, liters })).sort((a, b) => b.liters - a.liters);
     const daily = days.map((day) => ({ day, liters: totalsByDay[day] }));
-    const activeDays = daily.filter((item) => item.liters > 0).length;
-    return { daily, fieldTotals, total, average: total / 7, activeDays };
+    return { daily, fieldTotals, total, average: total / 7, activeDays: daily.filter((item) => item.liters > 0).length };
   }, [records]);
-
   const maxDaily = Math.max(1, ...analysis.daily.map((item) => item.liters));
   const maxField = Math.max(1, ...analysis.fieldTotals.map((item) => item.liters));
 
   return (
     <section className="panel water-panel">
       <div className="water-panel__heading">
-        <div>
-          <h2>Water usage analysis</h2>
-          <p>Estimated consumption over the last 7 days</p>
-        </div>
+        <div><h2>Water usage analysis</h2><p>Estimated consumption over the last 7 days</p></div>
         <span className="water-panel__unit">Litres (L)</span>
       </div>
-
       <div className="water-kpis">
         <div><span>Total used</span><strong>{formatLiters(analysis.total)}</strong></div>
         <div><span>Daily average</span><strong>{formatLiters(analysis.average)}</strong></div>
         <div><span>Active usage days</span><strong>{analysis.activeDays} / 7</strong></div>
       </div>
-
       <div className="water-chart-block">
         <h3>Daily consumption</h3>
         {analysis.total === 0 ? <p className="panel__empty">No water usage recorded yet. Start the simulator to generate usage data.</p> : (
@@ -68,7 +56,6 @@ export default function WaterUsageChart({ records }) {
           </div>
         )}
       </div>
-
       <div className="water-chart-block water-chart-block--fields">
         <h3>Consumption by field</h3>
         {analysis.fieldTotals.length === 0 ? <p className="panel__empty">Field comparison will appear when the simulator records water usage.</p> : (
@@ -82,7 +69,7 @@ export default function WaterUsageChart({ records }) {
           </div>
         )}
       </div>
-      <p className="water-panel__note">Simulation estimate, not a physical flow-meter measurement. Usage is generated when simulated soil moisture falls below the irrigation threshold.</p>
+      <p className="water-panel__note">Simulation estimate, not a physical flow-meter measurement. Usage is generated when the automatic irrigation scheduler opens a field.</p>
     </section>
   );
 }
