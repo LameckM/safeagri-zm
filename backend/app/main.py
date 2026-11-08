@@ -221,7 +221,7 @@ def list_water_usage(days: int = Query(30, ge=1, le=365), field_id: int | None =
                         w.liters, w.recorded_at, w.source
                  FROM water_usage_readings w
                  JOIN fields f ON f.id = w.field_id
-                 WHERE w.recorded_at >= datetime('now', ?)"""
+                 WHERE date(w.recorded_at) >= date('now', ?)"""
         params = [f"-{days} days"]
         if field_id is not None:
             sql += " AND w.field_id = ?"
