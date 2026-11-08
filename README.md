@@ -82,7 +82,7 @@ python simulate.py --sensor water --scenario high --node node-03 --fast --hours 
 python simulate.py --scenario offline --node node-01 --fast --hours 1
 ```
 
-The `offline` scenario sends one final baseline packet and then stops sending packets for that node. The backend marks it offline after `SAFEAGRI_STALE_MINUTES` has elapsed. The default is 15 minutes; set a shorter value for a deliberate test, then restart the backend. The simulator's `--fast` option accelerates sample generation but does not accelerate real wall-clock time used by offline detection.
+The `SAFEAGRI_SIMULATED_FLOW_LPM` setting controls estimated water flow in litres per minute (default 12). The simulator records one water-usage entry for each automatic irrigation OPEN event, using the event duration multiplied by the configured flow rate.\n\nThe `offline` scenario sends one final baseline packet and then stops sending packets for that node. The backend marks it offline after `SAFEAGRI_STALE_MINUTES` has elapsed. The default is 15 minutes; set a shorter value for a deliberate test, then restart the backend. The simulator's `--fast` option accelerates sample generation but does not accelerate real wall-clock time used by offline detection.
 
 Set `SAFEAGRI_API_URL` if the API is not at `http://localhost:8000`.
 
