@@ -78,3 +78,22 @@ def test_field_rename_works_without_account_login(client):
 
 def test_field_creation_remains_disabled(client):
     assert client.post("/fields", json={"name": "North Plot", "node_id": "node-new"}).status_code == 405
+
+
+def test_water_usage_requires_node_key_and_is_returned_in_history(client):
+    key = client.node_keys["node-02"]
+    payload = {"node_id": "node-02", "liters": 120.5, "source": "simulated"}
+    assert client.post("/water-usage", json=payload).status_code == 401
+    saved = client.post("/water-usage", json=payload, headers={"X-Node-Key": key})
+    assert saved.status_code == 201
+    assert saved.json()["liters"] == 120.5
+    history = client.get("/water-usage").json()
+    assert len(history) == 1
+    assert history[0]["field_name"] == "Field 2"
+    assert history[0]["source"] == "simulated"
+
+
+def test_water_usage_rejects_negative_or_unreasonable_volume(client):
+    headers = {"X-Node-Key": client.node_keys["node-02"]}
+    assert client.post("/water-usage", json={"node_id": "node-02", "liters": -1}, headers=headers).status_code == 422
+    assert client.post("/water-usage", json={"node_id": "node-02", "liters": 100001}, headers=headers).status_code == 422
