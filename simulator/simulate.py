@@ -138,10 +138,10 @@ def load_node_keys(path=KEYS_PATH):
         return {}
 
 
-def post_water_usage(client, node_id, liters, node_key=None):
+def post_water_usage(client, node_id, liters, event_id, node_key=None):
     headers = {"X-Node-Key": node_key} if node_key else {}
     try:
-        response = client.post(WATER_USAGE_URL, json={"node_id": node_id, "liters": round(liters, 2), "source": "simulated"}, headers=headers, timeout=5)
+        response = client.post(WATER_USAGE_URL, json={"node_id": node_id, "liters": round(liters, 2), "source": "simulated", "irrigation_event_id": event_id}, headers=headers, timeout=5)
         if response.status_code != 201:
             log.warning("Water usage rejected for %s: %s %s", node_id, response.status_code, response.text)
         else:
@@ -170,7 +170,7 @@ def record_new_irrigation_events(client, fields_by_node, node_keys, processed_ev
         node_id = next((node for node, item in fields_by_node.items() if item["id"] == event["field_id"]), None)
         if node_id is None or liters <= 0:
             continue
-        post_water_usage(client, node_id, liters, node_keys.get(node_id))
+        post_water_usage(client, node_id, liters, event_id, node_keys.get(node_id))
         fields_by_node[node_id]["state"].moisture = max(fields_by_node[node_id]["state"].moisture, 45.0)
 
 
