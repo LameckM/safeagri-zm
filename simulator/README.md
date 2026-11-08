@@ -97,7 +97,7 @@ In another terminal:
 
 ```powershell
 cd simulator
-python simulate.py --fast --hours 2
+python simulate.py --fast --hours 24
 ```
 
 Configure the assumed flow with `SAFEAGRI_SIMULATED_FLOW_LPM`. This is an illustrative estimate, not a measured flow rate. The dashboard shows seven-day totals, daily consumption, daily average, and field comparison. The backend scheduler must be running and node keys provisioned.
