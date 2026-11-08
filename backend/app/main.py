@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import auth
 from .db import get_conn, init_db
 from .scheduler import run_schedule, sync_node_alerts
-from .schemas import FieldUpdate, ReadingIn, ReadingOut
+from .schemas import FieldUpdate, ReadingIn, ReadingOut, WaterUsageIn
 from .validation import check_reading_flags, check_trend_flags, describe_flag
 
 log = logging.getLogger("safeagri")
@@ -192,6 +192,43 @@ def list_readings(field_id: int | None = None, limit: int = Query(100, ge=1, le=
     with get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.post("/water-usage", status_code=201)
+def create_water_usage(payload: WaterUsageIn, x_node_key: str | None = Header(default=None)):
+    recorded_at = utc_iso(payload.timestamp) if payload.timestamp else utc_iso()
+    received_at = utc_iso()
+    with get_conn() as conn:
+        field = conn.execute(
+            "SELECT id, node_key_hash FROM fields WHERE node_id = ?", (payload.node_id,)
+        ).fetchone()
+        stored_hash = field["node_key_hash"] if field else None
+        if not auth.node_key_matches(x_node_key, stored_hash):
+            raise HTTPException(status_code=401, detail="Invalid node credentials")
+        cur = conn.execute(
+            """INSERT INTO water_usage_readings
+               (field_id, liters, recorded_at, received_at, source)
+               VALUES (?, ?, ?, ?, ?)""",
+            (field["id"], payload.liters, recorded_at, received_at, payload.source),
+        )
+    return {"id": cur.lastrowid, "field_id": field["id"], "liters": payload.liters, "recorded_at": recorded_at}
+
+
+@app.get("/water-usage")
+def list_water_usage(days: int = Query(30, ge=1, le=365), field_id: int | None = None):
+    with get_conn() as conn:
+        sql = """SELECT w.id, w.field_id, f.name AS field_name, f.node_id,
+                        w.liters, w.recorded_at, w.source
+                 FROM water_usage_readings w
+                 JOIN fields f ON f.id = w.field_id
+                 WHERE w.recorded_at >= datetime('now', ?)"""
+        params = [f"-{days} days"]
+        if field_id is not None:
+            sql += " AND w.field_id = ?"
+            params.append(field_id)
+        sql += " ORDER BY w.recorded_at ASC, w.id ASC"
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
 
 
 @app.get("/latest")
