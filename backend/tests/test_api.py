@@ -97,3 +97,34 @@ def test_water_usage_rejects_negative_or_unreasonable_volume(client):
     headers = {"X-Node-Key": client.node_keys["node-02"]}
     assert client.post("/water-usage", json={"node_id": "node-02", "liters": -1}, headers=headers).status_code == 422
     assert client.post("/water-usage", json={"node_id": "node-02", "liters": 100001}, headers=headers).status_code == 422
+
+
+def test_water_usage_event_volume_is_idempotent(client):
+    from app.db import get_conn
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO irrigation_events (field_id, action, source, duration_min, created_at) VALUES (2, 'open', 'rule', 10, '2026-11-08T00:00:00+00:00')"
+        )
+        event_id = cursor.lastrowid
+    payload = {"node_id": "node-02", "liters": 120, "source": "simulated", "irrigation_event_id": event_id}
+    headers = {"X-Node-Key": client.node_keys["node-02"]}
+    first = client.post("/water-usage", json=payload, headers=headers)
+    second = client.post("/water-usage", json={**payload, "liters": 999}, headers=headers)
+    assert first.status_code == second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert second.json()["liters"] == 120
+
+
+def test_water_usage_rejects_event_for_another_field(client):
+    from app.db import get_conn
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO irrigation_events (field_id, action, source, duration_min, created_at) VALUES (1, 'open', 'rule', 10, '2026-11-08T00:00:00+00:00')"
+        )
+        event_id = cursor.lastrowid
+    response = client.post(
+        "/water-usage",
+        json={"node_id": "node-02", "liters": 100, "irrigation_event_id": event_id},
+        headers={"X-Node-Key": client.node_keys["node-02"]},
+    )
+    assert response.status_code == 422
